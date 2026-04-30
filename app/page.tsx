@@ -632,7 +632,7 @@ export default function Home() {
   const [voiceMuted, setVoiceMuted] = useState(false);
 
   // Voice narrator
-  const { isSpeaking: narratorSpeaking, currentNarration, experienceLog, speak, unlockSpeech, speechUnlocked } = useVoiceNarrator({ muted: voiceMuted });
+  const { isSpeaking: narratorSpeaking, currentNarration, experienceLog, speak, unlockSpeech, speechUnlocked, voicePreference } = useVoiceNarrator({ muted: voiceMuted });
 
   // Track which landmarks we've already narrated (by name) to avoid repetition
   const spokenLandmarks = useRef<Set<string>>(new Set());
@@ -1272,8 +1272,8 @@ export default function Home() {
   // ── Drawer ────────────────────────────────────────────────────────────────
   const getDrawerBounds = () => ({
     min: 92,
-    middle: 340, // Aumentado de 280 para mostrar más contenido
-    max: Math.floor(window.innerHeight * 0.90), // Aumentado de 0.82
+    middle: 340,
+    max: window.innerHeight - 130, // Permite subir casi hasta el tope, deteniéndose antes de los controles superiores
   });
 
   const clampDrawerHeight = (height: number) => {
@@ -1341,12 +1341,12 @@ export default function Home() {
             key={tab}
             onClick={() => setActiveTab(tab)}
             whileTap={{ scale: 0.97 }}
-            className={`relative px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors flex-1 ${activeTab === tab ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
+            className={`relative px-2 py-1.5 rounded-lg text-[10px] font-bold transition-colors flex-1 flex items-center justify-center gap-1 ${activeTab === tab ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
               }`}
           >
-            {tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Experiencia"}
+            <span className="truncate">{tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Experiencia"}</span>
             {tab === "experience" && experienceLog.length > 0 && (
-              <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] font-bold">
+              <span className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500 text-white text-[8px] font-black">
                 {experienceLog.length}
               </span>
             )}
@@ -1359,33 +1359,6 @@ export default function Home() {
             )}
           </motion.button>
         ))}
-        {/* Voice mute toggle */}
-        <motion.button
-          onClick={() => setVoiceMuted(m => !m)}
-          whileTap={{ scale: 0.9 }}
-          className={`ml-1 shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${voiceMuted
-              ? "bg-red-50 border border-red-200"
-              : narratorSpeaking
-                ? "bg-blue-50 border border-blue-200"
-                : "bg-zinc-100 border border-zinc-200"
-            }`}
-          title={voiceMuted ? "Activar voz" : "Silenciar voz"}
-        >
-          {voiceMuted ? (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.2" strokeLinecap="round">
-              <line x1="1" y1="1" x2="23" y2="23" />
-              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
-            </svg>
-          ) : (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={narratorSpeaking ? "#3b82f6" : "#94a3b8"} strokeWidth="2.2" strokeLinecap="round">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="22" />
-              <line x1="8" y1="22" x2="16" y2="22" />
-            </svg>
-          )}
-        </motion.button>
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
@@ -1602,8 +1575,8 @@ export default function Home() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: idx * 0.03, duration: 0.16 }}
                       className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border ${item.type === "danger"
-                          ? "bg-red-50/60 border-red-100"
-                          : "bg-zinc-50 border-zinc-100"
+                        ? "bg-red-50/60 border-red-100"
+                        : "bg-zinc-50 border-zinc-100"
                         }`}
                     >
                       <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0"
@@ -1816,24 +1789,30 @@ export default function Home() {
           className={`absolute inset-0 z-0 h-full w-full transition-opacity duration-300 ${experienceMode === "ar" ? "pointer-events-none opacity-0" : "opacity-100"
             }`}
         />
-        <AIFloatingIsland context={aiContext} />
+        <AIFloatingIsland
+          context={aiContext}
+          isMuted={voiceMuted}
+          onToggleMute={() => setVoiceMuted(m => !m)}
+        />
 
-        {/* Floating Layer Toggles - Middle position */}
-        <div className="absolute right-4 top-20 z-10 flex items-center gap-1 rounded-full bg-white/70 p-0.5 backdrop-blur-md border border-black/5 shadow-lg shadow-black/5 md:left-1/2 md:-translate-x-1/2 md:right-auto md:p-1">
-          {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
-            <motion.button
-              key={mode}
-              onClick={() => setLayerMode(mode)}
-              whileTap={{ scale: 0.95 }}
-              className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-tight transition-all md:px-3 md:py-1.5 md:text-[10px] md:tracking-wider ${layerMode === mode
+        {/* Floating Layer Toggles - Visible even with drawer open */}
+        {experienceMode !== "ar" && (
+          <div className="absolute right-4 top-20 z-20 flex items-center gap-1 rounded-full bg-white/80 p-0.5 backdrop-blur-md border border-black/5 shadow-lg shadow-black/5 md:left-1/2 md:-translate-x-1/2 md:right-auto md:p-1">
+            {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
+              <motion.button
+                key={mode}
+                onClick={() => setLayerMode(mode)}
+                whileTap={{ scale: 0.95 }}
+                className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-tight transition-all md:px-3 md:py-1.5 md:text-[10px] md:tracking-wider ${layerMode === mode
                   ? "bg-blue-500 text-white shadow-sm shadow-blue-500/20"
                   : "text-zinc-500 hover:bg-black/5"
-                }`}
-            >
-              {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
-            </motion.button>
-          ))}
-        </div>
+                  }`}
+              >
+                {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
+              </motion.button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Desktop sidebar */}
@@ -1923,29 +1902,53 @@ export default function Home() {
           )}
         </div>
       )}
-      {/* ── Voice unlock toast (browser autoplay policy) ── */}
-      {experienceLog.length > 0 && !speechUnlocked && !voiceMuted && (
-        <motion.button
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 16 }}
-          transition={{ duration: 0.28, ease: "easeOut" }}
-          onClick={unlockSpeech}
-          className="absolute bottom-[calc(env(safe-area-inset-bottom)+304px)] left-1/2 -translate-x-1/2 z-40 md:bottom-6 md:left-auto md:right-6 md:translate-x-0 flex items-center gap-2.5 rounded-full px-4 py-2.5 shadow-xl shadow-blue-500/20 touch-manipulation"
-          style={{
-            background: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
-            border: "1px solid rgba(255,255,255,0.15)",
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" y1="19" x2="12" y2="22" />
-            <line x1="8" y1="22" x2="16" y2="22" />
-          </svg>
-          <span className="text-[13px] font-bold text-white">Toca para escuchar</span>
-        </motion.button>
-      )}
+      {/* ── Voice Permission Modal ── */}
+      <AnimatePresence>
+        {voicePreference === "unknown" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-100 flex items-center justify-center bg-black/40 backdrop-blur-sm px-6"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl text-center"
+            >
+              <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                  <line x1="8" y1="22" x2="16" y2="22" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-zinc-800 mb-3">¿Activar guía de voz?</h2>
+              <p className="text-[14px] text-zinc-500 leading-relaxed mb-8">
+                CaliGuía puede narrarte la historia y curiosidades de los lugares que visites. ¿Deseas activar el audio?
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => unlockSpeech(true)}
+                  className="w-full py-4 bg-blue-500 text-white rounded-2xl font-bold text-[15px] shadow-lg shadow-blue-500/25 active:scale-[0.98] transition-transform"
+                >
+                  Sí, activar audio
+                </button>
+                <button
+                  onClick={() => {
+                    unlockSpeech(false);
+                    setVoiceMuted(true);
+                  }}
+                  className="w-full py-3 text-zinc-400 font-semibold text-[14px] hover:text-zinc-600"
+                >
+                  No, tal vez luego
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

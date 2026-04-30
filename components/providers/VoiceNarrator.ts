@@ -17,7 +17,6 @@ interface UseVoiceNarratorOptions {
   muted?: boolean;
 }
 
-/** Selects the best available Spanish voice — prefers Colombian/neutral */
 function pickSpanishVoice(): SpeechSynthesisVoice | null {
   if (typeof window === "undefined" || !window.speechSynthesis) return null;
   const voices = window.speechSynthesis.getVoices();
@@ -39,18 +38,18 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentNarration, setCurrentNarration] = useState<NarrationEvent | null>(null);
   const [experienceLog, setExperienceLog] = useState<NarrationEvent[]>([]);
-  // Whether the user has tapped to unlock browser speech
   const [speechUnlocked, setSpeechUnlocked] = useState(false);
+  const [voicePreference, setVoicePreference] = useState<"granted" | "denied" | "unknown">("unknown");
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const queueRef = useRef<NarrationEvent[]>([]);
   const isPlayingRef = useRef(false);
   const unlockedRef = useRef(false);
 
-  // Chrome loads voices async
+  // Load preference from localStorage
   useEffect(() => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.onvoiceschanged = () => {};
+    const saved = localStorage.getItem("caliguia_voice_preference") as any;
+    if (saved) setVoicePreference(saved);
   }, []);
 
   const stopSpeaking = useCallback(() => {
@@ -63,7 +62,7 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
 
   const playNext = useCallback(() => {
     if (muted || !queueRef.current.length || isPlayingRef.current) return;
-    if (!unlockedRef.current) return; // wait for user gesture
+    if (!unlockedRef.current) return; 
     if (typeof window === "undefined" || !window.speechSynthesis) return;
 
     const event = queueRef.current.shift()!;
@@ -71,7 +70,6 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
     isPlayingRef.current = true;
     setIsSpeaking(true);
 
-    // Resume in case Chrome paused it (e.g. tab switch)
     window.speechSynthesis.resume();
 
     const utterance = new SpeechSynthesisUtterance(event.text);
@@ -115,7 +113,6 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
         playNext();
       }
 
-      // Always log to experience panel (skip duplicates within 60s)
       if (event.title) {
         setExperienceLog((prev) => {
           const recent = prev.find(
@@ -129,58 +126,39 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
     [playNext, stopSpeaking]
   );
 
-  /** Call this from a user-gesture handler (button click) to unlock browser TTS */
-  const unlockSpeech = useCallback(() => {
-    if (unlockedRef.current) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+  const unlockSpeech = useCallback((granted: boolean) => {
+    const pref = granted ? "granted" : "denied";
+    localStorage.setItem("caliguia_voice_preference", pref);
+    setVoicePreference(pref);
 
-    unlockedRef.current = true;
-    setSpeechUnlocked(true);
-
-    // Speak a silent utterance to "unlock" the API, then play queue
-    const silent = new SpeechSynthesisUtterance(" ");
-    silent.volume = 0;
-    silent.lang = "es-CO";
-    silent.onend = () => {
-      // Now play the real queue
-      setTimeout(() => playNext(), 80);
-    };
-    window.speechSynthesis.speak(silent);
+    if (granted) {
+      unlockedRef.current = true;
+      setSpeechUnlocked(true);
+      const silent = new SpeechSynthesisUtterance(" ");
+      silent.volume = 0;
+      window.speechSynthesis.speak(silent);
+      setTimeout(() => playNext(), 100);
+    }
   }, [playNext]);
 
   useEffect(() => {
     if (muted) stopSpeaking();
   }, [muted, stopSpeaking]);
 
-  // Chrome pauses speechSynthesis when tab goes background — resume on visibility
-  useEffect(() => {
-    const onVisible = () => {
-      if (!unlockedRef.current) return;
-      if (window.speechSynthesis.paused) window.speechSynthesis.resume();
-      if (!isPlayingRef.current) playNext();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [playNext]);
-
-  const clearLog = useCallback(() => setExperienceLog([]), []);
-
   return {
     isSpeaking,
     currentNarration,
     experienceLog,
     speechUnlocked,
+    voicePreference,
     speak,
     stopSpeaking,
     unlockSpeech,
-    clearLog,
+    clearLog: () => setExperienceLog([]),
   };
 }
 
-export async function fetchNarration(
-  prompt: string,
-  type: NarrationType
-): Promise<string | null> {
+export async function fetchNarration(prompt: string, type: NarrationType): Promise<string | null> {
   try {
     const res = await fetch("/api/narrate", {
       method: "POST",
