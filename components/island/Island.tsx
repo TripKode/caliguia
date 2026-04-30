@@ -26,12 +26,9 @@ export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(4));
-  const [lastMessage, setLastMessage] = useState<string>("Analizando tu entorno en Cali...");
-  const [showBubble, setShowBubble] = useState(true);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const animFrameRef = useRef<number | null>(null);
-  const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Bar animation ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -54,15 +51,6 @@ export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
     animFrameRef.current = requestAnimationFrame(animate);
     return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
   }, [isSpeaking, isMuted]);
-
-  // ── Auto-hide bubble ──────────────────────────────────────────────────────
-  useEffect(() => {
-    if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
-    if (showBubble) {
-      bubbleTimer.current = setTimeout(() => setShowBubble(false), 5000);
-    }
-    return () => { if (bubbleTimer.current) clearTimeout(bubbleTimer.current); };
-  }, [showBubble, lastMessage]);
 
   // ── Show input → focus ────────────────────────────────────────────────────
   useEffect(() => {
@@ -103,16 +91,18 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
 
       const assistantMsg: Message = { role: "assistant", content: reply, id: crypto.randomUUID() };
       setMessages(prev => [...prev, assistantMsg]);
-      setLastMessage(reply);
-      setShowBubble(true);
       setIsSpeaking(true);
 
       // Simulate speaking duration based on text length
       const speakMs = Math.min(Math.max(reply.length * 55, 2000), 8000);
       setTimeout(() => setIsSpeaking(false), speakMs);
     } catch {
-      setLastMessage("Error de conexión. Intenta de nuevo.");
-      setShowBubble(true);
+      const assistantMsg: Message = {
+        role: "assistant",
+        content: "Error de conexión. Intenta de nuevo.",
+        id: crypto.randomUUID(),
+      };
+      setMessages(prev => [...prev, assistantMsg]);
     } finally {
       setIsLoading(false);
     }
@@ -125,27 +115,9 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="absolute top-10 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 pointer-events-none"
+    <div className="absolute left-1/2 top-2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 pointer-events-none sm:top-3"
       style={{ width: "min(420px, calc(100vw - 32px))" }}
     >
-      {/* ── Speech bubble ── */}
-      <div
-        className="pointer-events-none self-start ml-12 transition-all duration-300"
-        style={{
-          opacity: showBubble && !showInput ? 1 : 0,
-          transform: showBubble && !showInput ? "translateY(0) scale(1)" : "translateY(4px) scale(0.97)",
-        }}
-      >
-        <div className="relative bg-white/90 backdrop-blur-xl border border-black/[0.07] rounded-2xl rounded-tl-sm px-3.5 py-2.5 max-w-[260px]">
-          <p className="text-[12px] font-medium text-zinc-700 leading-relaxed line-clamp-2">{lastMessage}</p>
-          {/* triangle */}
-          <div
-            className="absolute bottom-[-6px] left-3 w-3 h-3 bg-white/90 border-r border-b border-black/[0.07]"
-            style={{ clipPath: "polygon(0 0, 100% 100%, 0 100%)", transform: "rotate(-45deg) translateX(2px)" }}
-          />
-        </div>
-      </div>
-
       {/* ── Main island ── */}
       <div
         className="pointer-events-auto w-full"

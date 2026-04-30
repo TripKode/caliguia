@@ -1,17 +1,43 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type PointerEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { AIFloatingIsland } from "../components/island/Island";
 
 declare global {
   interface Window {
     __googleMapsProxyLoading?: Promise<void>;
+    __caliguiaGoogleMapsReady?: () => void;
     gm_authFailure?: () => void;
   }
 }
 
+function hasBaseGoogleMaps() {
+  return Boolean(window.google?.maps?.Map || window.google?.maps?.importLibrary);
+}
+
+function waitForGoogleMapsBase(timeoutMs = 10000) {
+  if (hasBaseGoogleMaps()) return Promise.resolve();
+
+  return new Promise<void>((resolve, reject) => {
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      if (hasBaseGoogleMaps()) {
+        window.clearInterval(interval);
+        resolve();
+        return;
+      }
+
+      if (Date.now() - startedAt > timeoutMs) {
+        window.clearInterval(interval);
+        reject(new Error("Google Maps SDK did not become ready after script load"));
+      }
+    }, 50);
+  });
+}
+
 async function loadGoogleMapsViaProxy() {
-  if (window.google?.maps) return;
+  if (hasBaseGoogleMaps()) return;
   if (window.__googleMapsProxyLoading) return window.__googleMapsProxyLoading;
 
   window.__googleMapsProxyLoading = (async () => {
@@ -30,13 +56,13 @@ async function loadGoogleMapsViaProxy() {
       const scriptId = "google-maps-proxy-script";
       const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
 
-      if (window.google?.maps) {
+      if (hasBaseGoogleMaps()) {
         resolve();
         return;
       }
 
       if (existingScript) {
-        existingScript.addEventListener("load", () => resolve(), { once: true });
+        waitForGoogleMapsBase().then(resolve).catch(reject);
         existingScript.addEventListener("error", () => reject(new Error("Failed to load Maps via proxy")), {
           once: true,
         });
@@ -45,10 +71,11 @@ async function loadGoogleMapsViaProxy() {
 
       const params = new URLSearchParams({
         internal_secret: internalSecret,
-        libraries: "maps,places,marker,visualization",
+        libraries: "maps,places,visualization",
         v: "weekly",
         language: "es",
         loading: "async",
+        callback: "__caliguiaGoogleMapsReady",
       });
 
       const script = document.createElement("script");
@@ -57,13 +84,39 @@ async function loadGoogleMapsViaProxy() {
       script.async = true;
       script.defer = true;
       script.crossOrigin = "anonymous";
-      script.onload = () => resolve();
+      window.__caliguiaGoogleMapsReady = () => {
+        waitForGoogleMapsBase().then(resolve).catch(reject);
+      };
+      script.onload = () => {
+        waitForGoogleMapsBase().then(resolve).catch(reject);
+      };
       script.onerror = () => reject(new Error("Failed to load Maps via proxy"));
       document.head.appendChild(script);
     });
-  })();
+  })().catch((error) => {
+    window.__googleMapsProxyLoading = undefined;
+    throw error;
+  });
 
   return window.__googleMapsProxyLoading;
+}
+
+async function ensureGoogleMapsLibraries() {
+  if (typeof google.maps.importLibrary === "function") {
+    const [{ Map }] = await Promise.all([
+      google.maps.importLibrary("maps") as Promise<google.maps.MapsLibrary>,
+      google.maps.importLibrary("places"),
+      google.maps.importLibrary("visualization"),
+    ]);
+
+    return { Map };
+  }
+
+  if (!google.maps.Map || !google.maps.places?.Place || !google.maps.visualization?.HeatmapLayer) {
+    throw new Error("Google Maps libraries were not available after script load");
+  }
+
+  return { Map: google.maps.Map };
 }
 
 // ─── Haversine distance in meters ─────────────────────────────────────────────
@@ -115,6 +168,87 @@ interface ComunaData {
 }
 
 type Status = "idle" | "loading" | "tracking" | "denied" | "error";
+
+type CachedLocation = {
+  lat: number;
+  lng: number;
+  accuracy: number;
+  savedAt: number;
+};
+
+const LOCATION_OPT_IN_KEY = "caliguia:location-opt-in";
+const LEGACY_LOCATION_OPT_IN_KEY = "location_granted";
+const LOCATION_CACHE_KEY = "caliguia:last-location";
+const LOCATION_CACHE_MAX_AGE = 1000 * 60 * 60 * 12;
+const CALI_CENTER = { lat: 3.4516, lng: -76.5320 };
+const CALI_BOUNDS = {
+  north: 3.56,
+  south: 3.33,
+  east: -76.43,
+  west: -76.62,
+};
+
+function isInsideCaliBounds(lat: number, lng: number) {
+  return lat <= CALI_BOUNDS.north && lat >= CALI_BOUNDS.south && lng <= CALI_BOUNDS.east && lng >= CALI_BOUNDS.west;
+}
+
+function getComunaCentroid(comuna: ComunaData) {
+  const lat = comuna.coords.reduce((sum, [value]) => sum + value, 0) / comuna.coords.length;
+  const lng = comuna.coords.reduce((sum, [, value]) => sum + value, 0) / comuna.coords.length;
+  return { lat, lng };
+}
+
+function readCachedLocation(): CachedLocation | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(LOCATION_CACHE_KEY);
+    if (!raw) return null;
+
+    const cached = JSON.parse(raw) as Partial<CachedLocation>;
+    if (
+      typeof cached.lat !== "number" ||
+      typeof cached.lng !== "number" ||
+      typeof cached.accuracy !== "number" ||
+      typeof cached.savedAt !== "number"
+    ) {
+      return null;
+    }
+
+    if (Date.now() - cached.savedAt > LOCATION_CACHE_MAX_AGE) {
+      window.localStorage.removeItem(LOCATION_CACHE_KEY);
+      return null;
+    }
+
+    return cached as CachedLocation;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedLocation(location: Omit<CachedLocation, "savedAt">) {
+  try {
+    window.localStorage.setItem(LOCATION_OPT_IN_KEY, "true");
+    window.localStorage.setItem(LEGACY_LOCATION_OPT_IN_KEY, "true");
+    window.localStorage.setItem(
+      LOCATION_CACHE_KEY,
+      JSON.stringify({ ...location, savedAt: Date.now() })
+    );
+  } catch {
+    // Storage can be unavailable in private browsing; location still works for the session.
+  }
+}
+
+function hasLocationOptIn() {
+  try {
+    return (
+      window.localStorage.getItem(LOCATION_OPT_IN_KEY) === "true" ||
+      window.localStorage.getItem(LEGACY_LOCATION_OPT_IN_KEY) === "true"
+    );
+  } catch {
+    return false;
+  }
+}
 
 // ─── Cali Comunas — polígonos aproximados basados en geografía real ───────────
 // Coordenadas [lat, lng] de cada comuna. Centro de Cali: 3.4516, -76.5320
@@ -387,13 +521,12 @@ function getCategoryLabel(types: string[]): string {
 export default function Home() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  const markerRef = useRef<{ setPosition: (pos: google.maps.LatLngLiteral) => void } | null>(null);
   const circleRef = useRef<google.maps.Circle | null>(null);
   const badgeRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
   const requestingLocationRef = useRef(false);
   const lastFetchPos = useRef<{ lat: number; lng: number } | null>(null);
-  const serviceRef = useRef<google.maps.places.PlacesService | null>(null);
   const polygonsRef = useRef<google.maps.Polygon[]>([]);
   const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
@@ -401,6 +534,7 @@ export default function Home() {
   const dragStartY = useRef<number>(0);
   const drawerStartH = useRef<number>(0);
   const isDragging = useRef(false);
+  const drawerCurrentH = useRef(280);
 
   const [status, setStatus] = useState<Status>("idle");
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -409,6 +543,7 @@ export default function Home() {
   const [places, setPlaces] = useState<NearbyPlace[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [drawerH, setDrawerH] = useState(280);
+  const [isDrawerDragging, setIsDrawerDragging] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [layerMode, setLayerMode] = useState<LayerMode>("risk");
   const [currentComuna, setCurrentComuna] = useState<ComunaData | null>(null);
@@ -498,33 +633,55 @@ export default function Home() {
   const drawHeatmapLayer = useCallback((map: google.maps.Map) => {
     if (heatmapRef.current) { heatmapRef.current.setMap(null); }
 
-    // Weight: high=1.0, medium=0.6, low=0.3, safe=0.1
-    const weightMap: Record<RiskLevel, number> = { high: 1.0, medium: 0.6, low: 0.3, safe: 0.1 };
+    const weightMap: Record<RiskLevel, number> = { high: 1.0, medium: 0.65, low: 0.34, safe: 0.14 };
+    const points: google.maps.visualization.WeightedLocation[] = [];
 
-    const points = CALI_COMUNAS.map(c => {
-      // Centroid of polygon
-      const latSum = c.coords.reduce((s, [la]) => s + la, 0);
-      const lngSum = c.coords.reduce((s, [, lo]) => s + lo, 0);
-      const n = c.coords.length;
-      return {
-        location: new google.maps.LatLng(latSum / n, lngSum / n),
-        weight: weightMap[c.risk],
-      };
+    CALI_COMUNAS.forEach(comuna => {
+      const centroid = getComunaCentroid(comuna);
+      const baseWeight = weightMap[comuna.risk];
+
+      points.push({
+        location: new google.maps.LatLng(centroid.lat, centroid.lng),
+        weight: baseWeight * 1.35,
+      });
+
+      comuna.coords.forEach(([lat, lng], index) => {
+        points.push({
+          location: new google.maps.LatLng(lat, lng),
+          weight: baseWeight * 0.68,
+        });
+
+        const next = comuna.coords[(index + 1) % comuna.coords.length];
+        points.push({
+          location: new google.maps.LatLng((lat + next[0]) / 2, (lng + next[1]) / 2),
+          weight: baseWeight * 0.48,
+        });
+      });
     });
 
     heatmapRef.current = new google.maps.visualization.HeatmapLayer({
       data: points,
       map,
-      radius: 80,
-      opacity: 0.65,
+      radius: Math.max(42, Math.min(92, 118 - map.getZoom()! * 4)),
+      opacity: 0.58,
       gradient: [
         "rgba(34,197,94,0)",
-        "rgba(34,197,94,0.6)",
-        "rgba(132,204,22,0.7)",
-        "rgba(245,158,11,0.75)",
-        "rgba(239,68,68,0.8)",
-        "rgba(220,38,38,0.9)",
+        "rgba(34,197,94,0.42)",
+        "rgba(132,204,22,0.55)",
+        "rgba(245,158,11,0.68)",
+        "rgba(239,68,68,0.78)",
+        "rgba(153,27,27,0.86)",
       ],
+    });
+
+    const zoomListener = map.addListener("zoom_changed", () => {
+      if (!heatmapRef.current) return;
+      const zoom = map.getZoom() ?? 13;
+      heatmapRef.current.set("radius", Math.max(38, Math.min(94, 122 - zoom * 4)));
+    });
+
+    heatmapRef.current.addListener("map_changed", () => {
+      if (!heatmapRef.current?.getMap()) google.maps.event.removeListener(zoomListener);
     });
   }, []);
 
@@ -540,8 +697,9 @@ export default function Home() {
   }, [drawRiskLayer, drawHeatmapLayer]);
 
   // ── Fetch nearby businesses ───────────────────────────────────────────────
-  const fetchNearby = useCallback((lat: number, lng: number) => {
-    if (!serviceRef.current) return;
+  const fetchNearby = useCallback(async (lat: number, lng: number) => {
+    if (!google.maps.places?.Place?.searchNearby) return;
+    if (!isInsideCaliBounds(lat, lng)) return;
     if (lastFetchPos.current) {
       const dist = haversineDistance(lastFetchPos.current.lat, lastFetchPos.current.lng, lat, lng);
       if (dist < 150) return;
@@ -549,23 +707,53 @@ export default function Home() {
     lastFetchPos.current = { lat, lng };
     setLoadingPlaces(true);
 
-    serviceRef.current.nearbySearch(
-      { location: new google.maps.LatLng(lat, lng), radius: 1000, type: "establishment" },
-      (results, st) => {
-        if (st === google.maps.places.PlacesServiceStatus.OK && results) {
-          const sorted = (results as NearbyPlace[])
-            .filter(p => p.geometry?.location)
-            .sort((a, b) => {
-              const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
-              const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
-              return da - db;
-            })
-            .slice(0, 30);
-          setPlaces(sorted);
-        }
-        setLoadingPlaces(false);
-      }
-    );
+    try {
+      const { places: nearbyPlaces } = await google.maps.places.Place.searchNearby({
+        fields: [
+          "id",
+          "displayName",
+          "formattedAddress",
+          "location",
+          "rating",
+          "userRatingCount",
+          "types",
+          "businessStatus",
+          "priceLevel",
+        ],
+        locationRestriction: {
+          center: { lat, lng },
+          radius: 1000,
+        },
+        maxResultCount: 20,
+        rankPreference: google.maps.places.SearchNearbyRankPreference.DISTANCE,
+        language: "es",
+        region: "CO",
+      });
+
+      const sorted = nearbyPlaces
+        .filter(place => place.location)
+        .map((place): NearbyPlace => ({
+          place_id: place.id,
+          name: place.displayName ?? "Negocio",
+          vicinity: place.formattedAddress ?? place.shortFormattedAddress ?? "Dirección no disponible",
+          rating: place.rating ?? undefined,
+          user_ratings_total: place.userRatingCount ?? undefined,
+          types: place.types ?? [],
+          geometry: { location: place.location! },
+          business_status: place.businessStatus ?? undefined,
+        }))
+        .sort((a, b) => {
+          const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
+          const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
+          return da - db;
+        });
+
+      setPlaces(sorted);
+    } catch (error) {
+      console.error("Nearby places search error:", error);
+    } finally {
+      setLoadingPlaces(false);
+    }
   }, []);
 
   // ── Init map ──────────────────────────────────────────────────────────────
@@ -574,11 +762,9 @@ export default function Home() {
 
     await loadGoogleMapsViaProxy();
 
-    const { Map } = await google.maps.importLibrary("maps") as google.maps.MapsLibrary;
-    await google.maps.importLibrary("places");
-    await google.maps.importLibrary("visualization");
+    const { Map } = await ensureGoogleMapsLibraries();
 
-    const center = { lat, lng };
+    const center = isInsideCaliBounds(lat, lng) ? { lat, lng } : CALI_CENTER;
 
     mapInstance.current = new Map(mapRef.current!, {
       center,
@@ -586,10 +772,14 @@ export default function Home() {
       styles: MAP_STYLES,
       disableDefaultUI: true,
       gestureHandling: "greedy",
-      mapId: "DEMO_MAP_ID",
+      minZoom: 11,
+      maxZoom: 18,
+      restriction: {
+        latLngBounds: CALI_BOUNDS,
+        strictBounds: true,
+      },
     });
 
-    serviceRef.current = new google.maps.places.PlacesService(mapInstance.current);
     infoWindowRef.current = new google.maps.InfoWindow();
 
     circleRef.current = new google.maps.Circle({
@@ -603,22 +793,49 @@ export default function Home() {
       radius: 40,
     });
 
-    const { AdvancedMarkerElement, PinElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
+    class UserDotOverlay extends google.maps.OverlayView {
+      private div: HTMLDivElement | null = null;
 
-    const userPin = new PinElement({
-      background: "#3b82f6",
-      borderColor: "#ffffff",
-      glyphColor: "#ffffff",
-      scale: 0.8,
-    });
+      constructor(private pos: google.maps.LatLngLiteral, private map: google.maps.Map) {
+        super();
+        this.setMap(map);
+      }
 
-    markerRef.current = new AdvancedMarkerElement({
-      position: center,
-      map: mapInstance.current,
-      content: userPin.element,
-      title: "Tu ubicación",
-      zIndex: 999,
-    });
+      onAdd() {
+        this.div = document.createElement("div");
+        this.div.style.position = "absolute";
+        this.div.style.width = "20px";
+        this.div.style.height = "20px";
+        this.div.style.zIndex = "998";
+        this.div.style.pointerEvents = "none";
+        this.div.innerHTML = PIN_SVG;
+        this.getPanes()!.overlayMouseTarget.appendChild(this.div);
+      }
+
+      draw() {
+        const projection = this.getProjection();
+        if (!projection || !this.div) return;
+
+        const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+        if (!point) return;
+
+        this.div.style.left = `${point.x}px`;
+        this.div.style.top = `${point.y}px`;
+        this.div.style.transform = "translate(-50%, -50%)";
+      }
+
+      setPosition(pos: google.maps.LatLngLiteral) {
+        this.pos = pos;
+        this.draw();
+      }
+
+      onRemove() {
+        this.div?.parentNode?.removeChild(this.div);
+        this.div = null;
+      }
+    }
+
+    markerRef.current = new UserDotOverlay(center, mapInstance.current);
 
     // Badge overlay
     class BadgeOverlay extends google.maps.OverlayView {
@@ -655,6 +872,12 @@ export default function Home() {
 
     badgeRef.current = new BadgeOverlay(new google.maps.LatLng(lat, lng), mapInstance.current);
 
+    const caliBounds = new google.maps.LatLngBounds(
+      { lat: CALI_BOUNDS.south, lng: CALI_BOUNDS.west },
+      { lat: CALI_BOUNDS.north, lng: CALI_BOUNDS.east }
+    );
+    mapInstance.current.fitBounds(caliBounds, isMobile ? 44 : 72);
+
     // Draw initial layer
     applyLayer(layerMode, mapInstance.current);
     fetchNearby(lat, lng);
@@ -667,6 +890,7 @@ export default function Home() {
     setLocationError(null);
     setLocationDebug(null);
     const { latitude: lat, longitude: lng, accuracy } = position.coords;
+    writeCachedLocation({ lat, lng, accuracy });
     setCoords({ lat, lng, accuracy });
     setStatus("tracking");
 
@@ -682,7 +906,7 @@ export default function Home() {
     } else {
       const pos = { lat, lng };
       mapInstance.current.panTo(pos);
-      if (markerRef.current) markerRef.current.position = pos;
+      markerRef.current?.setPosition(pos);
       badgeRef.current?.setPosition(new google.maps.LatLng(lat, lng));
       circleRef.current?.setCenter(pos);
       circleRef.current?.setRadius(Math.min(accuracy, 200));
@@ -708,28 +932,35 @@ export default function Home() {
     setStatus("error");
   };
 
-  const requestLocation = useCallback(() => {
+  const requestLocation = useCallback((requestOptions?: { silent?: boolean }) => {
     if (requestingLocationRef.current) return;
+    const silent = requestOptions?.silent ?? false;
     setLocationError(null);
-    setLocationDebug(
-      `Origen: ${window.location.origin} | Seguro: ${window.isSecureContext ? "si" : "no"} | Geolocation: ${"geolocation" in navigator ? "si" : "no"
-      }`
-    );
+    if (!silent) {
+      setLocationDebug(
+        `Origen: ${window.location.origin} | Seguro: ${window.isSecureContext ? "si" : "no"} | Geolocation: ${"geolocation" in navigator ? "si" : "no"
+        }`
+      );
+    }
 
     if (!window.isSecureContext) {
-      setLocationError("El navegador solo permite pedir ubicación en HTTPS o localhost. Abre la app con HTTPS para probarla en el celular.");
-      setStatus("error");
+      if (!silent) {
+        setLocationError("El navegador solo permite pedir ubicación en HTTPS o localhost. Abre la app con HTTPS para probarla en el celular.");
+        setStatus("error");
+      }
       return;
     }
 
     if (!navigator.geolocation) {
-      setLocationError("Este navegador no soporta ubicación.");
-      setStatus("error");
+      if (!silent) {
+        setLocationError("Este navegador no soporta ubicación.");
+        setStatus("error");
+      }
       return;
     }
 
     requestingLocationRef.current = true;
-    setStatus("loading");
+    if (!silent) setStatus("loading");
 
     const options = {
       enableHighAccuracy: true,
@@ -755,11 +986,17 @@ export default function Home() {
                 enableHighAccuracy: false,
               });
             },
-            handleError,
+            silent ? () => {
+              requestingLocationRef.current = false;
+            } : handleError,
             { ...options, enableHighAccuracy: false }
           );
         } else {
-          handleError(err);
+          if (silent) {
+            requestingLocationRef.current = false;
+          } else {
+            handleError(err);
+          }
         }
       },
       options
@@ -771,6 +1008,67 @@ export default function Home() {
     if (mapInstance.current) applyLayer(layerMode, mapInstance.current);
   }, [layerMode, applyLayer]);
 
+  // Restore the last accepted location first, then refresh silently only when permission is already granted.
+  useEffect(() => {
+    let isMounted = true;
+
+    const restoreLocation = async () => {
+      const cached = readCachedLocation();
+
+      if (cached) {
+        setCoords({ lat: cached.lat, lng: cached.lng, accuracy: cached.accuracy });
+        setStatus("tracking");
+        detectComuna(cached.lat, cached.lng);
+
+        if (!mapInstance.current) {
+          try {
+            await initMap(cached.lat, cached.lng);
+          } catch (error) {
+            console.error("Cached map initialization error:", error);
+            if (isMounted) {
+              setLocationError("No pudimos cargar Google Maps. Revisa la configuración de la API key en el servidor.");
+              setStatus("error");
+            }
+          }
+        }
+      }
+
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const result = await navigator.permissions.query({ name: "geolocation" });
+
+          if (!isMounted) return;
+
+          if (result.state === "granted") {
+            requestLocation({ silent: Boolean(cached) });
+          } else if (result.state === "denied" && !cached) {
+            setStatus("denied");
+            setLocationError("Permiso de ubicación denegado. Actívalo en la configuración de tu navegador.");
+          }
+
+          result.onchange = () => {
+            if (result.state === "granted") {
+              requestLocation({ silent: Boolean(readCachedLocation()) });
+            } else if (result.state === "denied" && !readCachedLocation()) {
+              setStatus("denied");
+              setLocationError("Permiso de ubicación denegado. Actívalo en la configuración de tu navegador.");
+            }
+          };
+        }
+      } catch (error) {
+        if (!cached && hasLocationOptIn()) {
+          setStatus("idle");
+        }
+      }
+    };
+
+    restoreLocation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [detectComuna, requestLocation]);
+
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
@@ -778,47 +1076,105 @@ export default function Home() {
   }, []);
 
   // ── Drawer ────────────────────────────────────────────────────────────────
+  const getDrawerBounds = () => ({
+    min: 92,
+    middle: 280,
+    max: Math.floor(window.innerHeight * 0.82),
+  });
+
+  const clampDrawerHeight = (height: number) => {
+    const { min, max } = getDrawerBounds();
+    return Math.min(Math.max(height, min), max);
+  };
+
   const onDragStart = (clientY: number) => {
     isDragging.current = true;
+    setIsDrawerDragging(true);
     dragStartY.current = clientY;
-    drawerStartH.current = drawerH;
+    drawerStartH.current = drawerCurrentH.current;
   };
+
   const onDragMove = (clientY: number) => {
     if (!isDragging.current) return;
     const delta = dragStartY.current - clientY;
-    const next = Math.min(Math.max(drawerStartH.current + delta, 80), window.innerHeight * 0.85);
+    const next = clampDrawerHeight(drawerStartH.current + delta);
+    drawerCurrentH.current = next;
     setDrawerH(next);
   };
+
   const onDragEnd = () => {
     isDragging.current = false;
-    if (drawerH < 160) setDrawerH(80);
-    else if (drawerH > window.innerHeight * 0.6) setDrawerH(Math.floor(window.innerHeight * 0.82));
-    else setDrawerH(280);
+    setIsDrawerDragging(false);
+
+    const { min, middle, max } = getDrawerBounds();
+    const current = drawerCurrentH.current;
+    const snap = current < 170 ? min : current > window.innerHeight * 0.58 ? max : middle;
+    drawerCurrentH.current = snap;
+    setDrawerH(snap);
+  };
+
+  const onDrawerPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onDragStart(event.clientY);
+  };
+
+  const onDrawerPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!isDragging.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onDragMove(event.clientY);
+  };
+
+  const onDrawerPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    if (!isDragging.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onDragEnd();
   };
 
   // ── Panel ─────────────────────────────────────────────────────────────────
-  const PanelContent = () => (
+  const renderPanelContent = () => (
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* Tabs */}
       <div className="flex items-center gap-1 px-5 pt-4 pb-0 shrink-0">
         {(["places", "zones"] as const).map(tab => (
-          <button
+          <motion.button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${activeTab === tab
+            whileTap={{ scale: 0.97 }}
+            className={`relative px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${activeTab === tab
               ? "bg-blue-500/9 text-blue-600"
               : "text-zinc-400 hover:text-zinc-600"
               }`}
           >
             {tab === "places" ? "Negocios" : "Zonas de Riesgo"}
-          </button>
+            {activeTab === tab && (
+              <motion.span
+                layoutId="panel-tab-active"
+                className="absolute inset-0 -z-10 rounded-lg bg-blue-500/[0.09]"
+                transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              />
+            )}
+          </motion.button>
         ))}
       </div>
 
-      {/* ── TAB: Places ── */}
-      {activeTab === "places" && (
-        <>
+      <AnimatePresence mode="wait" initial={false}>
+        {activeTab === "places" && (
+          <motion.div
+            key="places"
+            className="flex min-h-0 flex-1 flex-col"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
           <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Cercanos</p>
@@ -834,34 +1190,48 @@ export default function Home() {
             )}
           </div>
 
-          {loadingPlaces && (
+          {loadingPlaces && places.length === 0 && (
             <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
               {[1, 2, 3].map(i => (
-                <div key={i} className="flex gap-3 items-center animate-pulse">
+                <motion.div
+                  key={i}
+                  className="flex gap-3 items-center animate-pulse"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                >
                   <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
                   <div className="flex flex-col gap-1.5 flex-1">
                     <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
                     <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
                   </div>
-                </div>
+                </motion.div>
               ))}
             </div>
           )}
 
-          {!loadingPlaces && (
-            <div className="overflow-y-auto flex-1 px-4 py-2">
+          {(!loadingPlaces || places.length > 0) && (
+            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
               {places.length === 0 && (
                 <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
                   {status === "tracking" ? "Sin negocios en el área." : status === "loading" ? "Buscando tu ubicación en Cali..." : "Comparte tu ubicación para ver negocios cercanos."}
                 </div>
               )}
-              <div className="flex flex-col gap-1">
+              <motion.div className="flex flex-col gap-1" layout>
                 {places.map((place) => {
                   const dist = coords
                     ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
                     : null;
                   return (
-                    <div key={place.place_id} className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer">
+                    <motion.div
+                      key={place.place_id}
+                      layout
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      whileTap={{ scale: 0.995 }}
+                      transition={{ duration: 0.16 }}
+                      className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
+                    >
                       <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
                         {getCategoryIcon(place.types)}
                       </div>
@@ -888,38 +1258,52 @@ export default function Home() {
                           {dist < 1000 ? `${dist}m` : `${(dist / 1000).toFixed(1)}km`}
                         </div>
                       )}
-                    </div>
+                    </motion.div>
                   );
                 })}
-              </div>
+              </motion.div>
             </div>
           )}
-        </>
-      )}
+          </motion.div>
+        )}
 
-      {/* ── TAB: Zones ── */}
-      {activeTab === "zones" && (
-        <div className="flex flex-col h-full overflow-hidden">
+        {activeTab === "zones" && (
+          <motion.div
+            key="zones"
+            className="flex h-full min-h-0 flex-col overflow-hidden"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
 
           {/* Layer toggle */}
           <div className="flex items-center gap-2 px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
             {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
-              <button
+              <motion.button
                 key={mode}
                 onClick={() => setLayerMode(mode)}
+                whileTap={{ scale: 0.97 }}
                 className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${layerMode === mode
                   ? "bg-blue-500 text-white"
                   : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
                   }`}
               >
                 {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
-              </button>
+              </motion.button>
             ))}
           </div>
 
           {/* Current zone banner */}
+          <AnimatePresence initial={false}>
           {currentComuna && (
-            <div className="mx-4 mt-3 shrink-0">
+            <motion.div
+              className="mx-4 mt-3 shrink-0"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18 }}
+            >
               <div
                 className="rounded-xl px-4 py-3 border"
                 style={{
@@ -939,8 +1323,9 @@ export default function Home() {
                 <p className="text-[14px] font-bold text-zinc-800">{currentComuna.name}</p>
                 <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{currentComuna.description}</p>
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
 
           {/* Legend */}
           <div className="px-5 pt-4 pb-2 shrink-0">
@@ -956,20 +1341,25 @@ export default function Home() {
           </div>
 
           {/* Comunas list */}
-          <div className="overflow-y-auto flex-1 px-4 pb-4">
+          <div className="overflow-y-auto overscroll-contain flex-1 px-4 pb-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2 mt-2">Las 22 Comunas</p>
             <div className="flex flex-col gap-1">
-              {CALI_COMUNAS.map(c => (
-                <div
+              {CALI_COMUNAS.map((c, index) => (
+                <motion.div
                   key={c.id}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-zinc-50 transition-colors cursor-pointer"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(index * 0.012, 0.18), duration: 0.16 }}
+                  whileTap={{ scale: 0.995 }}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${
+                    currentComuna?.id === c.id ? "bg-blue-500/[0.07]" : "hover:bg-zinc-50"
+                  }`}
                   onClick={() => {
                     if (mapInstance.current) {
-                      const latSum = c.coords.reduce((s, [la]) => s + la, 0);
-                      const lngSum = c.coords.reduce((s, [, lo]) => s + lo, 0);
-                      const n = c.coords.length;
-                      mapInstance.current.panTo({ lat: latSum / n, lng: lngSum / n });
+                      const centroid = getComunaCentroid(c);
+                      mapInstance.current.panTo(centroid);
                       mapInstance.current.setZoom(15);
+                      setCurrentComuna(c);
                     }
                   }}
                 >
@@ -984,12 +1374,13 @@ export default function Home() {
                   >
                     {RISK_CONFIG[c.risk].label.toUpperCase()}
                   </span>
-                </div>
+                </motion.div>
               ))}
             </div>
           </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 
@@ -1010,26 +1401,33 @@ export default function Home() {
 
       {/* Desktop sidebar */}
       <div className="hidden md:flex w-[340px] h-full bg-[#f7f6f3] border-l border-black/6 flex-col shrink-0 z-10">
-        <PanelContent />
+        {renderPanelContent()}
       </div>
 
       {/* Mobile drawer */}
       <div
-        className="md:hidden absolute bottom-0 left-0 right-0 z-20 bg-[#f7f6f3] rounded-t-2xl border-t border-black/6"
-        style={{ height: `${drawerH}px`, transition: isDragging.current ? "none" : "height 0.25s cubic-bezier(0.4,0,0.2,1)" }}
-        onMouseMove={e => onDragMove(e.clientY)}
-        onMouseUp={onDragEnd}
-        onTouchMove={e => onDragMove(e.touches[0].clientY)}
-        onTouchEnd={onDragEnd}
+        className="md:hidden absolute bottom-0 left-0 right-0 z-20 flex flex-col bg-[#f7f6f3] rounded-t-2xl border-t border-black/6 shadow-[0_-18px_45px_rgba(15,23,42,0.08)] will-change-[height]"
+        style={{
+          height: `${drawerH}px`,
+          paddingBottom: "env(safe-area-inset-bottom)",
+          transition: isDrawerDragging ? "none" : "height 0.25s cubic-bezier(0.4,0,0.2,1)",
+        }}
       >
         <div
-          className="flex justify-center pt-3 pb-1 cursor-grab active:cursor-grabbing shrink-0"
-          onMouseDown={e => onDragStart(e.clientY)}
-          onTouchStart={e => onDragStart(e.touches[0].clientY)}
+          className="flex h-10 shrink-0 touch-none select-none items-center justify-center cursor-grab active:cursor-grabbing"
+          onPointerDown={onDrawerPointerDown}
+          onPointerMove={onDrawerPointerMove}
+          onPointerUp={onDrawerPointerEnd}
+          onPointerCancel={onDrawerPointerEnd}
+          onLostPointerCapture={() => {
+            if (isDragging.current) onDragEnd();
+          }}
         >
           <div className="w-9 h-1 rounded-full bg-zinc-300" />
         </div>
-        <PanelContent />
+        <div className="min-h-0 flex-1 touch-pan-y overscroll-contain">
+          {renderPanelContent()}
+        </div>
       </div>
 
 
@@ -1046,7 +1444,7 @@ export default function Home() {
           </div>
           <button
             type="button"
-            onClick={requestLocation}
+            onClick={() => requestLocation()}
             onPointerUp={() => requestLocation()}
             onTouchEnd={() => requestLocation()}
             disabled={status === "loading"}
@@ -1074,7 +1472,7 @@ export default function Home() {
           </p>
           <button
             type="button"
-            onClick={requestLocation}
+            onClick={() => requestLocation()}
             onPointerUp={() => requestLocation()}
             onTouchEnd={() => requestLocation()}
             className="touch-manipulation rounded-full bg-blue-500 px-5 py-3 text-[13px] font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-600"
