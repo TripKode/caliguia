@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback, type PointerEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import Webcam from "react-webcam";
 import { AIFloatingIsland } from "../components/island/Island";
+import { useExperience } from "../components/providers/ExperienceProvider";
 
 declare global {
   interface Window {
@@ -519,6 +521,7 @@ function getCategoryLabel(types: string[]): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Home() {
+  const { experienceMode } = useExperience();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
   const markerRef = useRef<{ setPosition: (pos: google.maps.LatLngLiteral) => void } | null>(null);
@@ -548,6 +551,7 @@ export default function Home() {
   const [layerMode, setLayerMode] = useState<LayerMode>("risk");
   const [currentComuna, setCurrentComuna] = useState<ComunaData | null>(null);
   const [activeTab, setActiveTab] = useState<"places" | "zones">("places");
+  const [arCameraError, setArCameraError] = useState<string | null>(null);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1394,8 +1398,54 @@ export default function Home() {
   return (
     <div className="relative w-full h-dvh overflow-hidden bg-[#f7f6f3] font-sans flex">
 
-      <div className="relative flex-1 h-full">
-        <div ref={mapRef} className="w-full h-full" />
+      <div className="relative flex-1 h-full overflow-hidden bg-zinc-950">
+        <AnimatePresence>
+          {experienceMode === "ar" && (
+            <motion.div
+              key="ar-camera"
+              className="absolute inset-0 z-0 bg-zinc-950"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.24 }}
+            >
+              <Webcam
+                audio={false}
+                mirrored={false}
+                playsInline
+                screenshotFormat="image/jpeg"
+                videoConstraints={{
+                  facingMode: { ideal: "environment" },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                }}
+                onUserMedia={() => setArCameraError(null)}
+                onUserMediaError={() => setArCameraError("No pudimos acceder a la cámara. Revisa permisos del navegador.")}
+                className="h-full w-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0,rgba(0,0,0,0.10)_58%,rgba(0,0,0,0.34)_100%)]" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/30 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/35 to-transparent" />
+              <div className="pointer-events-none absolute left-4 top-24 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/85 backdrop-blur-md md:left-6">
+                AR Cali
+              </div>
+              {arCameraError && (
+                <div className="absolute inset-0 flex items-center justify-center px-8 text-center">
+                  <div className="max-w-[280px] rounded-2xl border border-white/15 bg-black/45 px-4 py-3 text-[12px] font-medium leading-relaxed text-white backdrop-blur-xl">
+                    {arCameraError}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div
+          ref={mapRef}
+          className={`absolute inset-0 z-0 h-full w-full transition-opacity duration-300 ${
+            experienceMode === "ar" ? "pointer-events-none opacity-0" : "opacity-100"
+          }`}
+        />
         <AIFloatingIsland context={aiContext} />
       </div>
 

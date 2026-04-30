@@ -20,7 +20,7 @@ interface AIFloatingIslandProps {
 const BAR_COUNT = 5;
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
-  const { experienceMode, language, setExperienceMode, setLanguage, toggleExperienceMode } = useExperience();
+  const { experienceMode, language, setLanguage, toggleExperienceMode } = useExperience();
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [showInput, setShowInput] = useState(false);
@@ -241,6 +241,32 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                   transition={{ duration: 0.16, ease: "easeOut" }}
                   className="absolute right-0 top-[calc(100%+12px)] z-50 w-56 rounded-2xl border border-black/[0.07] bg-white/95 p-3 shadow-xl shadow-zinc-900/10 backdrop-blur-xl md:hidden"
                 >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleExperienceMode();
+                      setShowMenu(false);
+                    }}
+                    className={`mb-3 flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition-colors ${
+                      experienceMode === "ar"
+                        ? "border-blue-500/20 bg-blue-500/[0.08] text-blue-600"
+                        : "border-black/[0.07] bg-zinc-50 text-zinc-700"
+                    }`}
+                  >
+                    <span className="text-[12px] font-semibold">Realidad Aumentada</span>
+                    <span
+                      className={`relative h-5 w-9 rounded-full transition-colors ${
+                        experienceMode === "ar" ? "bg-blue-500" : "bg-zinc-300"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                          experienceMode === "ar" ? "translate-x-[18px]" : "translate-x-0.5"
+                        }`}
+                      />
+                    </span>
+                  </button>
+
                   <div className="flex items-center justify-between gap-3">
                     <label htmlFor="island-language" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
                       Idioma
