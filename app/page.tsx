@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, useCallback, type PointerEvent } from "rea
 import { AnimatePresence, motion } from "framer-motion";
 import Webcam from "react-webcam";
 import { AIFloatingIsland } from "../components/island/Island";
-import { useExperience } from "../components/providers/ExperienceProvider";
+import { useExperience, TOURISM_INTERESTS } from "../components/providers/ExperienceProvider";
+import { useVoiceNarrator, fetchNarration, type NarrationType } from "../components/providers/VoiceNarrator";
 
 declare global {
   interface Window {
@@ -143,6 +144,76 @@ function pointInPolygon(lat: number, lng: number, polygon: [number, number][]): 
   }
   return inside;
 }
+
+// ─── Cali Landmarks for voice narration ──────────────────────────────────────
+interface Landmark {
+  name: string;
+  lat: number;
+  lng: number;
+  type: NarrationType;
+  icon: string;
+  prompt: string;
+  radiusM: number;
+}
+
+const CALI_LANDMARKS: Landmark[] = [
+  {
+    name: "La Ermita", lat: 3.4534, lng: -76.5383, type: "monument", icon: "⛪", radiusM: 250,
+    prompt: "El usuario acaba de pasar cerca de la Iglesia La Ermita en Cali, un templo neogótico icónico del siglo XX a orillas del río Cali."
+  },
+  {
+    name: "San Antonio", lat: 3.4480, lng: -76.5430, type: "monument", icon: "🏛️", radiusM: 300,
+    prompt: "El usuario está en el barrio San Antonio de Cali, zona histórica con casas republicanas coloridas y una capilla colonial del siglo XVIII."
+  },
+  {
+    name: "Cristo Rey", lat: 3.4309, lng: -76.5597, type: "monument", icon: "✝️", radiusM: 400,
+    prompt: "El usuario puede ver el Cristo Rey, el monumento más icónico de Cali que corona el cerro Los Cristales a 1470 metros."
+  },
+  {
+    name: "Museo de la Salsa", lat: 3.4502, lng: -76.5328, type: "monument", icon: "💃", radiusM: 200,
+    prompt: "El usuario está cerca del Museo de la Salsa en Cali, el corazón musical de la ciudad y patrimonio inmaterial de Colombia."
+  },
+  {
+    name: "Barrio Obrero", lat: 3.4491, lng: -76.5310, type: "monument", icon: "🎶", radiusM: 250,
+    prompt: "El usuario está en el Barrio Obrero, la cuna de la salsa caleña, lleno de salsotecas y cultura popular desde los años 60."
+  },
+  {
+    name: "La Topa Tolondra", lat: 3.4498, lng: -76.5335, type: "monument", icon: "🕺", radiusM: 200,
+    prompt: "El usuario pasa por La Topa Tolondra, una de las salsotecas más legendarias e históricas de Cali."
+  },
+  {
+    name: "Teatro Municipal", lat: 3.4521, lng: -76.5356, type: "monument", icon: "🎭", radiusM: 220,
+    prompt: "El usuario está frente al Teatro Municipal Enrique Buenaventura, joya arquitectónica y cultural del centro de Cali."
+  },
+  {
+    name: "Parque del Perro", lat: 3.4341, lng: -76.5398, type: "monument", icon: "🌳", radiusM: 220,
+    prompt: "El usuario está en el Parque del Perro en el barrio Granada, el epicentro bohemio y gastronómico del sur de Cali."
+  },
+  {
+    name: "Zoológico de Cali", lat: 3.4467, lng: -76.5262, type: "monument", icon: "🦁", radiusM: 300,
+    prompt: "El usuario está cerca del Zoológico de Cali, uno de los mejores de América Latina con más de 200 especies."
+  },
+  {
+    name: "Galería Alameda", lat: 3.4561, lng: -76.5358, type: "monument", icon: "🛍️", radiusM: 220,
+    prompt: "El usuario está en la Galería Alameda, el mercado popular más emblemático de Cali con frutas exóticas, carnes y tradición."
+  },
+  {
+    name: "Loma de la Cruz", lat: 3.4394, lng: -76.5495, type: "monument", icon: "🌄", radiusM: 280,
+    prompt: "El usuario está en la Loma de la Cruz, mirador natural con una vista panorámica de toda la ciudad de Cali."
+  },
+  {
+    name: "Río Pance", lat: 3.3850, lng: -76.5510, type: "monument", icon: "🏞️", radiusM: 350,
+    prompt: "El usuario está cerca del Río Pance, el destino natural favorito de los caleños para refrescarse los fines de semana."
+  },
+  {
+    name: "Unidad Deportiva", lat: 3.4294, lng: -76.5273, type: "monument", icon: "🏟️", radiusM: 350,
+    prompt: "El usuario está cerca de la Unidad Deportiva Alberto Galindo, el complejo deportivo más importante de Cali."
+  },
+  {
+    name: "Ciudad Jardín", lat: 3.3950, lng: -76.5350, type: "monument", icon: "🌿", radiusM: 300,
+    prompt: "El usuario está en Ciudad Jardín, la zona residencial más tranquila y verde del sur de Cali."
+  },
+];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type RiskLevel = "high" | "medium" | "low" | "safe";
@@ -523,7 +594,7 @@ function getCategoryLabel(types: string[]): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Home() {
-  const { experienceMode } = useExperience();
+  const { experienceMode, selectedInterests, travelGroup } = useExperience();
   const webcamRef = useRef<Webcam>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
@@ -551,13 +622,24 @@ export default function Home() {
   const [drawerH, setDrawerH] = useState(280);
   const [isDrawerDragging, setIsDrawerDragging] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [layerMode, setLayerMode] = useState<LayerMode>("risk");
+  const [layerMode, setLayerMode] = useState<LayerMode>("none");
   const [currentComuna, setCurrentComuna] = useState<ComunaData | null>(null);
-  const [activeTab, setActiveTab] = useState<"places" | "zones">("places");
+  const [activeTab, setActiveTab] = useState<"places" | "zones" | "experience">("places");
   const [arCameraError, setArCameraError] = useState<string | null>(null);
   const [arFacingMode, setArFacingMode] = useState<"environment" | "user">("environment");
   const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(0.05);
   const [arZoomSupported, setArZoomSupported] = useState(false);
+  const [voiceMuted, setVoiceMuted] = useState(false);
+
+  // Voice narrator
+  const { isSpeaking: narratorSpeaking, currentNarration, experienceLog, speak, unlockSpeech, speechUnlocked } = useVoiceNarrator({ muted: voiceMuted });
+
+  // Track which landmarks we've already narrated (by name) to avoid repetition
+  const spokenLandmarks = useRef<Set<string>>(new Set());
+  // Track last danger narration to avoid flooding
+  const lastDangerNarration = useRef<number>(0);
+  // Track last position for movement detection
+  const lastNarratedPos = useRef<{ lat: number; lng: number } | null>(null);
 
   const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
     const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
@@ -1117,11 +1199,81 @@ export default function Home() {
     };
   }, []);
 
+  // ── Voice narration — reacts to every coords update ───────────────────────
+  // Using refs for speak/muted to avoid stale closure in the effect callback
+  const speakRef = useRef(speak);
+  useEffect(() => { speakRef.current = speak; }, [speak]);
+
+  const hasWelcomed = useRef(false);
+
+  useEffect(() => {
+    if (!coords || voiceMuted) return;
+    const { lat, lng } = coords;
+
+    // 1. Welcome on very first GPS fix (immediate fallback + async AI version)
+    if (!hasWelcomed.current) {
+      hasWelcomed.current = true;
+
+      // Immediate fallback — speaks right away without waiting for the API
+      const fallbackWelcome = "Bienvenido a Cali, la sucursal del cielo. Voy a acompañarte por la ciudad, parce.";
+      speakRef.current({ type: "welcome", text: fallbackWelcome, title: "Bienvenida a Cali", icon: "🌺" });
+
+      // Async AI version — if it returns, queues after the fallback
+      fetchNarration(
+        "El visitante acaba de activar CaliGuía y está comenzando a explorar la ciudad de Cali.",
+        "welcome"
+      ).then(text => {
+        if (text && text !== fallbackWelcome) {
+          speakRef.current({ type: "welcome", text, title: "Cali te espera", icon: "🌺" });
+        }
+      }).catch(() => null);
+    }
+
+    // 2. Movement threshold — skip if not moved enough
+    const movedEnough = !lastNarratedPos.current ||
+      haversineDistance(lastNarratedPos.current.lat, lastNarratedPos.current.lng, lat, lng) > 80;
+    if (!movedEnough) return;
+    lastNarratedPos.current = { lat, lng };
+
+    // 3. Danger zone check (cooldown: 3 min)
+    if (!voiceMuted) {
+      const dangerComuna = CALI_COMUNAS.find(c => c.risk === "high" && pointInPolygon(lat, lng, c.coords));
+      if (dangerComuna) {
+        const now = Date.now();
+        if (now - lastDangerNarration.current > 3 * 60 * 1000) {
+          lastDangerNarration.current = now;
+          const fallbackDanger = `Ojo, parce. Estás entrando a ${dangerComuna.name}. Mantente atento y por favor cuídate.`;
+          speakRef.current({ type: "danger", text: fallbackDanger, title: `⚠️ ${dangerComuna.name}`, icon: "⚠️" });
+          fetchNarration(
+            `El usuario está ingresando a ${dangerComuna.name}, una zona de alto riesgo en Cali. ${dangerComuna.description}`,
+            "danger"
+          ).then(text => {
+            if (text) speakRef.current({ type: "danger", text, title: `⚠️ ${dangerComuna.name}`, icon: "⚠️" });
+          }).catch(() => null);
+        }
+      }
+    }
+
+    // 4. Landmark proximity (narrated once per session)
+    for (const landmark of CALI_LANDMARKS) {
+      if (spokenLandmarks.current.has(landmark.name)) continue;
+      const dist = haversineDistance(lat, lng, landmark.lat, landmark.lng);
+      if (dist <= landmark.radiusM) {
+        spokenLandmarks.current.add(landmark.name);
+        fetchNarration(landmark.prompt, landmark.type).then(text => {
+          if (text) speakRef.current({ type: landmark.type, text, title: landmark.name, icon: landmark.icon });
+        }).catch(() => null);
+        break;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coords, voiceMuted]);
+
   // ── Drawer ────────────────────────────────────────────────────────────────
   const getDrawerBounds = () => ({
     min: 92,
-    middle: 280,
-    max: Math.floor(window.innerHeight * 0.82),
+    middle: 340, // Aumentado de 280 para mostrar más contenido
+    max: Math.floor(window.innerHeight * 0.90), // Aumentado de 0.82
   });
 
   const clampDrawerHeight = (height: number) => {
@@ -1182,29 +1334,58 @@ export default function Home() {
   // ── Panel ─────────────────────────────────────────────────────────────────
   const renderPanelContent = () => (
     <div className="flex flex-col h-full overflow-hidden">
-
-      {/* Tabs */}
-      <div className="flex items-center gap-1 px-5 pt-4 pb-0 shrink-0">
-        {(["places", "zones"] as const).map(tab => (
+      {/* Tabs + voice mute */}
+      <div className="flex items-center gap-1 px-4 pt-2 pb-0 shrink-0">
+        {(["places", "zones", "experience"] as const).map(tab => (
           <motion.button
             key={tab}
             onClick={() => setActiveTab(tab)}
             whileTap={{ scale: 0.97 }}
-            className={`relative px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${activeTab === tab
-              ? "bg-blue-500/9 text-blue-600"
-              : "text-zinc-400 hover:text-zinc-600"
+            className={`relative px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors flex-1 ${activeTab === tab ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
               }`}
           >
-            {tab === "places" ? "Negocios" : "Zonas de Riesgo"}
+            {tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Experiencia"}
+            {tab === "experience" && experienceLog.length > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] font-bold">
+                {experienceLog.length}
+              </span>
+            )}
             {activeTab === tab && (
               <motion.span
                 layoutId="panel-tab-active"
-                className="absolute inset-0 -z-10 rounded-lg bg-blue-500/[0.09]"
+                className="absolute inset-0 -z-10 rounded-lg bg-blue-500/9"
                 transition={{ type: "spring", stiffness: 420, damping: 34 }}
               />
             )}
           </motion.button>
         ))}
+        {/* Voice mute toggle */}
+        <motion.button
+          onClick={() => setVoiceMuted(m => !m)}
+          whileTap={{ scale: 0.9 }}
+          className={`ml-1 shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${voiceMuted
+              ? "bg-red-50 border border-red-200"
+              : narratorSpeaking
+                ? "bg-blue-50 border border-blue-200"
+                : "bg-zinc-100 border border-zinc-200"
+            }`}
+          title={voiceMuted ? "Activar voz" : "Silenciar voz"}
+        >
+          {voiceMuted ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.2" strokeLinecap="round">
+              <line x1="1" y1="1" x2="23" y2="23" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={narratorSpeaking ? "#3b82f6" : "#94a3b8"} strokeWidth="2.2" strokeLinecap="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+              <line x1="8" y1="22" x2="16" y2="22" />
+            </svg>
+          )}
+        </motion.button>
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
@@ -1217,95 +1398,230 @@ export default function Home() {
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
           >
-          <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Cercanos</p>
-              <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                {loadingPlaces ? "Buscando..." : `${places.length} negocios`}
-              </p>
-            </div>
-            {coords && (
-              <div className="text-right">
-                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
-                <p className="text-[13px] font-semibold text-blue-500">1 km</p>
+            <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Cercanos</p>
+                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
+                  {loadingPlaces ? "Buscando..." : `${places.length} negocios`}
+                </p>
               </div>
-            )}
-          </div>
-
-          {loadingPlaces && places.length === 0 && (
-            <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
-              {[1, 2, 3].map(i => (
-                <motion.div
-                  key={i}
-                  className="flex gap-3 items-center animate-pulse"
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                >
-                  <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
-                    <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
-
-          {(!loadingPlaces || places.length > 0) && (
-            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
-              {places.length === 0 && (
-                <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
-                  {status === "tracking" ? "Sin negocios en el área." : status === "loading" ? "Buscando tu ubicación en Cali..." : "Comparte tu ubicación para ver negocios cercanos."}
+              {coords && (
+                <div className="text-right">
+                  <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
+                  <p className="text-[13px] font-semibold text-blue-500">1 km</p>
                 </div>
               )}
-              <motion.div className="flex flex-col gap-1" layout>
-                {places.map((place) => {
-                  const dist = coords
-                    ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
-                    : null;
-                  return (
-                    <motion.div
-                      key={place.place_id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      whileTap={{ scale: 0.995 }}
-                      transition={{ duration: 0.16 }}
-                      className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
-                    >
-                      <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
-                        {getCategoryIcon(place.types)}
-                      </div>
-                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                        <p className="text-[13px] font-semibold text-zinc-800 truncate">{place.name}</p>
-                        <p className="text-[11px] text-zinc-400 truncate">{place.vicinity}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
-                            {getCategoryLabel(place.types)}
-                          </span>
-                          {place.rating && (
-                            <span className="text-[10px] font-medium text-amber-600">
-                              ★ {place.rating.toFixed(1)}
-                              {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
-                            </span>
-                          )}
-                          {place.business_status && place.business_status !== "OPERATIONAL" && (
-                            <span className="text-[10px] font-medium text-red-400">Cerrado</span>
-                          )}
+            </div>
+
+            {loadingPlaces && places.length === 0 && (
+              <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
+                {[1, 2, 3].map(i => (
+                  <motion.div
+                    key={i}
+                    className="flex gap-3 items-center animate-pulse"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.04 }}
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
+                    <div className="flex flex-col gap-1.5 flex-1">
+                      <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
+                      <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+
+            {(!loadingPlaces || places.length > 0) && (
+              <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
+                {places.length === 0 && (
+                  <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
+                    {status === "tracking" ? "Sin negocios en el área." : status === "loading" ? "Buscando tu ubicación en Cali..." : "Comparte tu ubicación para ver negocios cercanos."}
+                  </div>
+                )}
+                <motion.div className="flex flex-col gap-1" layout>
+                  {places.map((place) => {
+                    const dist = coords
+                      ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
+                      : null;
+                    return (
+                      <motion.div
+                        key={place.place_id}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        whileTap={{ scale: 0.995 }}
+                        transition={{ duration: 0.16 }}
+                        className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
+                      >
+                        <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
+                          {getCategoryIcon(place.types)}
                         </div>
-                      </div>
-                      {dist !== null && (
-                        <div className="text-[11px] font-semibold text-zinc-400 shrink-0 pt-0.5">
-                          {dist < 1000 ? `${dist}m` : `${(dist / 1000).toFixed(1)}km`}
+                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <p className="text-[13px] font-semibold text-zinc-800 truncate">{place.name}</p>
+                          <p className="text-[11px] text-zinc-400 truncate">{place.vicinity}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
+                              {getCategoryLabel(place.types)}
+                            </span>
+                            {place.rating && (
+                              <span className="text-[10px] font-medium text-amber-600">
+                                ★ {place.rating.toFixed(1)}
+                                {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
+                              </span>
+                            )}
+                            {place.business_status && place.business_status !== "OPERATIONAL" && (
+                              <span className="text-[10px] font-medium text-red-400">Cerrado</span>
+                            )}
+                          </div>
+                        </div>
+                        {dist !== null && (
+                          <div className="text-[11px] font-semibold text-zinc-400 shrink-0 pt-0.5">
+                            {dist < 1000 ? `${dist}m` : `${(dist / 1000).toFixed(1)}km`}
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+                </motion.div>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {activeTab === "experience" && (
+          <motion.div
+            key="experience"
+            className="flex h-full min-h-0 flex-col overflow-hidden"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Tu experiencia</p>
+                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
+                  {experienceLog.length > 0
+                    ? `${experienceLog.length} ${experienceLog.length === 1 ? "lugar visitado" : "lugares visitados"}`
+                    : "Explorando Cali"}
+                </p>
+              </div>
+              {experienceLog.length > 0 && (
+                <div className="text-right">
+                  <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Intereses</p>
+                  <p className="text-[12px] font-semibold text-blue-500">
+                    {selectedInterests.map(i => TOURISM_INTERESTS[i]?.label).filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Current narration banner */}
+            <AnimatePresence initial={false}>
+              {currentNarration && (
+                <motion.div
+                  key={currentNarration.id}
+                  className="mx-4 mt-3 shrink-0"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div
+                    className="rounded-xl px-4 py-3 border"
+                    style={{
+                      background: currentNarration.type === "danger"
+                        ? "rgba(239,68,68,0.06)" : "rgba(59,130,246,0.06)",
+                      borderColor: currentNarration.type === "danger"
+                        ? "rgba(239,68,68,0.2)" : "rgba(59,130,246,0.15)",
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">{currentNarration.icon ?? "🎙️"}</span>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.07em]"
+                        style={{ color: currentNarration.type === "danger" ? "#dc2626" : "#2563eb" }}>
+                        {narratorSpeaking ? "Hablando ahora" : "Último mensaje"}
+                      </p>
+                      {narratorSpeaking && (
+                        <div className="flex items-center gap-[2px] ml-auto">
+                          {[3, 5, 4, 6, 3].map((h, i) => (
+                            <div key={i} className="w-[2px] rounded-full"
+                              style={{
+                                height: `${h}px`,
+                                background: currentNarration.type === "danger" ? "#ef4444" : "#3b82f6",
+                                animation: `pulse-bar ${0.4 + i * 0.1}s ease-in-out infinite alternate`,
+                              }} />
+                          ))}
                         </div>
                       )}
+                    </div>
+                    <p className="text-[12px] text-zinc-700 leading-relaxed">{currentNarration.text}</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Experience log */}
+            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
+              {experienceLog.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-500/8 border border-blue-500/10 flex items-center justify-center text-2xl">
+                    🗺️
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-zinc-600">Comienza a explorar</p>
+                    <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">
+                      A medida que te muevas por Cali, CaliGuía te irá narrando los lugares que vayas encontrando.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 justify-center mt-1">
+                    {selectedInterests.map(id => (
+                      <span key={id} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/8 text-blue-600 border border-blue-500/12">
+                        {TOURISM_INTERESTS[id]?.label}
+                      </span>
+                    ))}
+                  </div>
+                  {travelGroup && (
+                    <p className="text-[10px] text-zinc-400">
+                      {travelGroup === "solo" ? "Solo" : travelGroup === "pareja" ? "En pareja" : travelGroup === "familia" ? "En familia" : "En grupo"}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2">
+                    {selectedInterests.map(i => TOURISM_INTERESTS[i]?.label).filter(Boolean).join(" · ")} · {travelGroup === "solo" ? "Solo" : travelGroup === "pareja" ? "En pareja" : travelGroup === "familia" ? "En familia" : "En grupo"}
+                  </p>
+                  {experienceLog.map((item, idx) => (
+                    <motion.div
+                      key={item.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.03, duration: 0.16 }}
+                      className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border ${item.type === "danger"
+                          ? "bg-red-50/60 border-red-100"
+                          : "bg-zinc-50 border-zinc-100"
+                        }`}
+                    >
+                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0"
+                        style={{
+                          background: item.type === "danger" ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.07)",
+                          border: item.type === "danger" ? "1px solid rgba(239,68,68,0.15)" : "1px solid rgba(59,130,246,0.1)",
+                        }}>
+                        {item.icon ?? "📍"}
+                      </div>
+                      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <p className="text-[12px] font-semibold text-zinc-800 truncate">{item.title ?? item.type}</p>
+                        <p className="text-[10px] text-zinc-500 leading-relaxed line-clamp-2">{item.text}</p>
+                      </div>
                     </motion.div>
-                  );
-                })}
-              </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
           </motion.div>
         )}
 
@@ -1318,111 +1634,99 @@ export default function Home() {
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
           >
-
-          {/* Layer toggle */}
-          <div className="flex items-center gap-2 px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
-            {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
-              <motion.button
-                key={mode}
-                onClick={() => setLayerMode(mode)}
-                whileTap={{ scale: 0.97 }}
-                className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${layerMode === mode
-                  ? "bg-blue-500 text-white"
-                  : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
-                  }`}
-              >
-                {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
-              </motion.button>
-            ))}
-          </div>
-
-          {/* Current zone banner */}
-          <AnimatePresence initial={false}>
-          {currentComuna && (
-            <motion.div
-              className="mx-4 mt-3 shrink-0"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-            >
-              <div
-                className="rounded-xl px-4 py-3 border"
-                style={{
-                  background: `${RISK_CONFIG[currentComuna.risk].fill}18`,
-                  borderColor: `${RISK_CONFIG[currentComuna.risk].stroke}30`,
-                }}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500">Tu zona actual</p>
-                  <span
-                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                    style={{ background: `${RISK_CONFIG[currentComuna.risk].fill}25`, color: RISK_CONFIG[currentComuna.risk].color }}
-                  >
-                    Riesgo {RISK_CONFIG[currentComuna.risk].label}
-                  </span>
-                </div>
-                <p className="text-[14px] font-bold text-zinc-800">{currentComuna.name}</p>
-                <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{currentComuna.description}</p>
-              </div>
-            </motion.div>
-          )}
-          </AnimatePresence>
-
-          {/* Legend */}
-          <div className="px-5 pt-4 pb-2 shrink-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-3">Leyenda</p>
-            <div className="grid grid-cols-2 gap-2">
-              {(Object.entries(RISK_CONFIG) as [RiskLevel, typeof RISK_CONFIG[RiskLevel]][]).map(([level, cfg]) => (
-                <div key={level} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-sm shrink-0" style={{ background: cfg.fill, border: `1px solid ${cfg.stroke}` }} />
-                  <span className="text-[11px] font-medium text-zinc-600">Riesgo {cfg.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Comunas list */}
-          <div className="overflow-y-auto overscroll-contain flex-1 px-4 pb-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2 mt-2">Las 22 Comunas</p>
-            <div className="flex flex-col gap-1">
-              {CALI_COMUNAS.map((c, index) => (
+            {/* Current zone banner */}
+            <AnimatePresence initial={false}>
+              {currentComuna && (
                 <motion.div
-                  key={c.id}
-                  initial={{ opacity: 0, y: 8 }}
+                  className="mx-4 mt-3 shrink-0"
+                  initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(index * 0.012, 0.18), duration: 0.16 }}
-                  whileTap={{ scale: 0.995 }}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${
-                    currentComuna?.id === c.id ? "bg-blue-500/[0.07]" : "hover:bg-zinc-50"
-                  }`}
-                  onClick={() => {
-                    if (mapInstance.current) {
-                      const centroid = getComunaCentroid(c);
-                      mapInstance.current.panTo(centroid);
-                      mapInstance.current.setZoom(15);
-                      setCurrentComuna(c);
-                    }
-                  }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.18 }}
                 >
-                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: RISK_CONFIG[c.risk].color }} />
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <p className="text-[12px] font-semibold text-zinc-700 truncate">{c.name}</p>
-                    <p className="text-[10px] text-zinc-400 truncate">{c.barrios.slice(0, 2).join(", ")}</p>
-                  </div>
-                  <span
-                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                    style={{ background: `${RISK_CONFIG[c.risk].fill}22`, color: RISK_CONFIG[c.risk].color }}
+                  <div
+                    className="rounded-xl px-4 py-3 border"
+                    style={{
+                      background: `${RISK_CONFIG[currentComuna.risk].fill}18`,
+                      borderColor: `${RISK_CONFIG[currentComuna.risk].stroke}30`,
+                    }}
                   >
-                    {RISK_CONFIG[c.risk].label.toUpperCase()}
-                  </span>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500">Tu zona actual</p>
+                      <span
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ background: `${RISK_CONFIG[currentComuna.risk].fill}25`, color: RISK_CONFIG[currentComuna.risk].color }}
+                      >
+                        Riesgo {RISK_CONFIG[currentComuna.risk].label}
+                      </span>
+                    </div>
+                    <p className="text-[14px] font-bold text-zinc-800">{currentComuna.name}</p>
+                    <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{currentComuna.description}</p>
+                  </div>
                 </motion.div>
-              ))}
+              )}
+            </AnimatePresence>
+
+            {/* Legend */}
+            <div className="px-5 pt-4 pb-2 shrink-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-3">Leyenda</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.entries(RISK_CONFIG) as [RiskLevel, typeof RISK_CONFIG[RiskLevel]][]).map(([level, cfg]) => (
+                  <div key={level} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-sm shrink-0" style={{ background: cfg.fill, border: `1px solid ${cfg.stroke}` }} />
+                    <span className="text-[11px] font-medium text-zinc-600">Riesgo {cfg.label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+
+            {/* Comunas list */}
+            <div className="overflow-y-auto overscroll-contain flex-1 px-4 pb-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2 mt-2">Las 22 Comunas</p>
+              <div className="flex flex-col gap-1">
+                {CALI_COMUNAS.map((c, index) => (
+                  <motion.div
+                    key={c.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(index * 0.012, 0.18), duration: 0.16 }}
+                    whileTap={{ scale: 0.995 }}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${currentComuna?.id === c.id ? "bg-blue-500/[0.07]" : "hover:bg-zinc-50"
+                      }`}
+                    onClick={() => {
+                      if (mapInstance.current) {
+                        const centroid = getComunaCentroid(c);
+                        mapInstance.current.panTo(centroid);
+                        mapInstance.current.setZoom(15);
+                        setCurrentComuna(c);
+                      }
+                    }}
+                  >
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: RISK_CONFIG[c.risk].color }} />
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <p className="text-[12px] font-semibold text-zinc-700 truncate">{c.name}</p>
+                      <p className="text-[10px] text-zinc-400 truncate">{c.barrios.slice(0, 2).join(", ")}</p>
+                    </div>
+                    <span
+                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+                      style={{ background: `${RISK_CONFIG[c.risk].fill}22`, color: RISK_CONFIG[c.risk].color }}
+                    >
+                      {RISK_CONFIG[c.risk].label.toUpperCase()}
+                    </span>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
           </motion.div>
         )}
+
       </AnimatePresence>
+      <style>{`
+        @keyframes pulse-bar {
+          from { transform: scaleY(0.5); opacity: 0.6; }
+          to   { transform: scaleY(1.4); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 
@@ -1466,8 +1770,8 @@ export default function Home() {
                 className="h-full w-full object-cover"
               />
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0,rgba(0,0,0,0.10)_58%,rgba(0,0,0,0.34)_100%)]" />
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/30 to-transparent" />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/35 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-linear-to-b from-black/30 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-linear-to-t from-black/35 to-transparent" />
               <div className="pointer-events-none absolute left-4 top-24 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/85 backdrop-blur-md md:left-6">
                 AR
               </div>
@@ -1509,11 +1813,27 @@ export default function Home() {
 
         <div
           ref={mapRef}
-          className={`absolute inset-0 z-0 h-full w-full transition-opacity duration-300 ${
-            experienceMode === "ar" ? "pointer-events-none opacity-0" : "opacity-100"
-          }`}
+          className={`absolute inset-0 z-0 h-full w-full transition-opacity duration-300 ${experienceMode === "ar" ? "pointer-events-none opacity-0" : "opacity-100"
+            }`}
         />
         <AIFloatingIsland context={aiContext} />
+
+        {/* Floating Layer Toggles - Middle position */}
+        <div className="absolute right-4 top-20 z-10 flex items-center gap-1 rounded-full bg-white/70 p-0.5 backdrop-blur-md border border-black/5 shadow-lg shadow-black/5 md:left-1/2 md:-translate-x-1/2 md:right-auto md:p-1">
+          {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
+            <motion.button
+              key={mode}
+              onClick={() => setLayerMode(mode)}
+              whileTap={{ scale: 0.95 }}
+              className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-tight transition-all md:px-3 md:py-1.5 md:text-[10px] md:tracking-wider ${layerMode === mode
+                  ? "bg-blue-500 text-white shadow-sm shadow-blue-500/20"
+                  : "text-zinc-500 hover:bg-black/5"
+                }`}
+            >
+              {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
+            </motion.button>
+          ))}
+        </div>
       </div>
 
       {/* Desktop sidebar */}
@@ -1602,6 +1922,29 @@ export default function Home() {
             </p>
           )}
         </div>
+      )}
+      {/* ── Voice unlock toast (browser autoplay policy) ── */}
+      {experienceLog.length > 0 && !speechUnlocked && !voiceMuted && (
+        <motion.button
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 16 }}
+          transition={{ duration: 0.28, ease: "easeOut" }}
+          onClick={unlockSpeech}
+          className="absolute bottom-[calc(env(safe-area-inset-bottom)+304px)] left-1/2 -translate-x-1/2 z-40 md:bottom-6 md:left-auto md:right-6 md:translate-x-0 flex items-center gap-2.5 rounded-full px-4 py-2.5 shadow-xl shadow-blue-500/20 touch-manipulation"
+          style={{
+            background: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
+            border: "1px solid rgba(255,255,255,0.15)",
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+            <line x1="8" y1="22" x2="16" y2="22" />
+          </svg>
+          <span className="text-[13px] font-bold text-white">Toca para escuchar</span>
+        </motion.button>
       )}
     </div>
   );
