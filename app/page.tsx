@@ -189,6 +189,8 @@ const CALI_BOUNDS = {
   east: -76.43,
   west: -76.62,
 };
+const AR_ZOOM_LEVELS = [0.05, 1, 10] as const;
+type ArZoomLevel = (typeof AR_ZOOM_LEVELS)[number];
 
 function isInsideCaliBounds(lat: number, lng: number) {
   return lat <= CALI_BOUNDS.north && lat >= CALI_BOUNDS.south && lng <= CALI_BOUNDS.east && lng >= CALI_BOUNDS.west;
@@ -554,9 +556,10 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"places" | "zones">("places");
   const [arCameraError, setArCameraError] = useState<string | null>(null);
   const [arFacingMode, setArFacingMode] = useState<"environment" | "user">("environment");
-  const [arWideAngleLabel, setArWideAngleLabel] = useState<string | null>(null);
+  const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(0.05);
+  const [arZoomSupported, setArZoomSupported] = useState(false);
 
-  const applyWideAngleZoom = useCallback(() => {
+  const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
     const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
     const track = stream?.getVideoTracks()[0];
     if (!track) return;
@@ -566,17 +569,27 @@ export default function Home() {
     };
 
     const minZoom = capabilities?.zoom?.min;
-    if (typeof minZoom !== "number") {
-      setArWideAngleLabel(null);
+    const maxZoom = capabilities?.zoom?.max;
+    if (typeof minZoom !== "number" || typeof maxZoom !== "number") {
+      setArZoomSupported(false);
       return;
     }
 
-    const requestedZoom = Math.max(minZoom, 0.05);
+    setArZoomSupported(true);
+    const requestedZoom = Math.min(Math.max(zoomLevel, minZoom), maxZoom);
     track
       .applyConstraints({ advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet] })
-      .then(() => setArWideAngleLabel(`x${requestedZoom.toFixed(2)}`))
-      .catch(() => setArWideAngleLabel(null));
+      .catch(() => setArZoomSupported(false));
   }, []);
+
+  const swapCameraZoom = useCallback(() => {
+    setArZoomLevel(current => {
+      const currentIndex = AR_ZOOM_LEVELS.indexOf(current);
+      const next = AR_ZOOM_LEVELS[(currentIndex + 1) % AR_ZOOM_LEVELS.length];
+      applyCameraZoom(next);
+      return next;
+    });
+  }, [applyCameraZoom]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1447,7 +1460,7 @@ export default function Home() {
                 }}
                 onUserMedia={() => {
                   setArCameraError(null);
-                  window.setTimeout(applyWideAngleZoom, 250);
+                  window.setTimeout(() => applyCameraZoom(arZoomLevel), 250);
                 }}
                 onUserMediaError={() => setArCameraError("No pudimos acceder a la cámara. Revisa permisos del navegador.")}
                 className="h-full w-full object-cover"
@@ -1458,23 +1471,31 @@ export default function Home() {
               <div className="pointer-events-none absolute left-4 top-24 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/85 backdrop-blur-md md:left-6">
                 AR
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setArWideAngleLabel(null);
-                  setArFacingMode(mode => (mode === "environment" ? "user" : "environment"));
-                }}
-                className="absolute right-4 top-24 flex h-10 items-center gap-2 rounded-full border border-white/20 bg-black/25 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/90 shadow-lg shadow-black/20 backdrop-blur-md transition-colors hover:bg-black/35 md:right-6"
-                title="Voltear cámara"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-                  <path d="M3 12a9 9 0 0 1 15.5-6.2" />
-                  <path d="M16 6h3V3" />
-                  <path d="M8 18H5v3" />
-                </svg>
-                <span>{arWideAngleLabel ?? "Flip"}</span>
-              </button>
+              <div className="absolute right-4 top-24 flex items-center gap-2 md:right-6">
+                <button
+                  type="button"
+                  onClick={() => setArFacingMode(mode => (mode === "environment" ? "user" : "environment"))}
+                  className="flex h-10 items-center gap-2 rounded-full border border-white/20 bg-black/25 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/90 shadow-lg shadow-black/20 backdrop-blur-md transition-colors hover:bg-black/35"
+                  title="Voltear cámara"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+                    <path d="M3 12a9 9 0 0 1 15.5-6.2" />
+                    <path d="M16 6h3V3" />
+                    <path d="M8 18H5v3" />
+                  </svg>
+                  <span>Flip</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={swapCameraZoom}
+                  className="flex h-10 min-w-14 items-center justify-center rounded-full border border-white/20 bg-black/25 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/90 shadow-lg shadow-black/20 backdrop-blur-md transition-colors hover:bg-black/35 disabled:opacity-45"
+                  title="Cambiar zoom"
+                  disabled={!arZoomSupported}
+                >
+                  x{arZoomLevel === 0.05 ? "0.05" : arZoomLevel}
+                </button>
+              </div>
               {arCameraError && (
                 <div className="absolute inset-0 flex items-center justify-center px-8 text-center">
                   <div className="max-w-[280px] rounded-2xl border border-white/15 bg-black/45 px-4 py-3 text-[12px] font-medium leading-relaxed text-white backdrop-blur-xl">
