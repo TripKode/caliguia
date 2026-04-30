@@ -522,6 +522,7 @@ function getCategoryLabel(types: string[]): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Home() {
   const { experienceMode } = useExperience();
+  const webcamRef = useRef<Webcam>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
   const markerRef = useRef<{ setPosition: (pos: google.maps.LatLngLiteral) => void } | null>(null);
@@ -552,6 +553,30 @@ export default function Home() {
   const [currentComuna, setCurrentComuna] = useState<ComunaData | null>(null);
   const [activeTab, setActiveTab] = useState<"places" | "zones">("places");
   const [arCameraError, setArCameraError] = useState<string | null>(null);
+  const [arFacingMode, setArFacingMode] = useState<"environment" | "user">("environment");
+  const [arWideAngleLabel, setArWideAngleLabel] = useState<string | null>(null);
+
+  const applyWideAngleZoom = useCallback(() => {
+    const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
+    const track = stream?.getVideoTracks()[0];
+    if (!track) return;
+
+    const capabilities = track.getCapabilities?.() as MediaTrackCapabilities & {
+      zoom?: { min?: number; max?: number; step?: number };
+    };
+
+    const minZoom = capabilities?.zoom?.min;
+    if (typeof minZoom !== "number") {
+      setArWideAngleLabel(null);
+      return;
+    }
+
+    const requestedZoom = Math.max(minZoom, 0.05);
+    track
+      .applyConstraints({ advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet] })
+      .then(() => setArWideAngleLabel(`x${requestedZoom.toFixed(2)}`))
+      .catch(() => setArWideAngleLabel(null));
+  }, []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1410,16 +1435,20 @@ export default function Home() {
               transition={{ duration: 0.24 }}
             >
               <Webcam
+                ref={webcamRef}
                 audio={false}
-                mirrored={false}
+                mirrored={arFacingMode === "user"}
                 playsInline
                 screenshotFormat="image/jpeg"
                 videoConstraints={{
-                  facingMode: { ideal: "environment" },
+                  facingMode: { ideal: arFacingMode },
                   width: { ideal: 1280 },
                   height: { ideal: 720 },
                 }}
-                onUserMedia={() => setArCameraError(null)}
+                onUserMedia={() => {
+                  setArCameraError(null);
+                  window.setTimeout(applyWideAngleZoom, 250);
+                }}
                 onUserMediaError={() => setArCameraError("No pudimos acceder a la cámara. Revisa permisos del navegador.")}
                 className="h-full w-full object-cover"
               />
@@ -1427,8 +1456,25 @@ export default function Home() {
               <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/30 to-transparent" />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/35 to-transparent" />
               <div className="pointer-events-none absolute left-4 top-24 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/85 backdrop-blur-md md:left-6">
-                AR Cali
+                AR
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setArWideAngleLabel(null);
+                  setArFacingMode(mode => (mode === "environment" ? "user" : "environment"));
+                }}
+                className="absolute right-4 top-24 flex h-10 items-center gap-2 rounded-full border border-white/20 bg-black/25 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/90 shadow-lg shadow-black/20 backdrop-blur-md transition-colors hover:bg-black/35 md:right-6"
+                title="Voltear cámara"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+                  <path d="M3 12a9 9 0 0 1 15.5-6.2" />
+                  <path d="M16 6h3V3" />
+                  <path d="M8 18H5v3" />
+                </svg>
+                <span>{arWideAngleLabel ?? "Flip"}</span>
+              </button>
               {arCameraError && (
                 <div className="absolute inset-0 flex items-center justify-center px-8 text-center">
                   <div className="max-w-[280px] rounded-2xl border border-white/15 bg-black/45 px-4 py-3 text-[12px] font-medium leading-relaxed text-white backdrop-blur-xl">
