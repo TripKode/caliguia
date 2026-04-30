@@ -1,15 +1,69 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import { AIFloatingIsland } from "../components/island/Island";
 
-if (typeof window !== "undefined" && !(window as any).__googleMapsOptionsSet) {
-  (window as any).__googleMapsOptionsSet = true;
-  setOptions({
-    key: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!,
-    v: "weekly",
-  });
+declare global {
+  interface Window {
+    __googleMapsProxyLoading?: Promise<void>;
+    gm_authFailure?: () => void;
+  }
+}
+
+async function loadGoogleMapsViaProxy() {
+  if (window.google?.maps) return;
+  if (window.__googleMapsProxyLoading) return window.__googleMapsProxyLoading;
+
+  window.__googleMapsProxyLoading = (async () => {
+    const keyRes = await fetch("/api/maps-key", { cache: "no-store" });
+    if (!keyRes.ok) {
+      throw new Error("Maps internal secret not configured");
+    }
+
+    const keyData = await keyRes.json();
+    const internalSecret = keyData.secret || keyData.key || "";
+    if (!internalSecret) {
+      throw new Error("Maps internal secret not available");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const scriptId = "google-maps-proxy-script";
+      const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
+
+      if (window.google?.maps) {
+        resolve();
+        return;
+      }
+
+      if (existingScript) {
+        existingScript.addEventListener("load", () => resolve(), { once: true });
+        existingScript.addEventListener("error", () => reject(new Error("Failed to load Maps via proxy")), {
+          once: true,
+        });
+        return;
+      }
+
+      const params = new URLSearchParams({
+        internal_secret: internalSecret,
+        libraries: "maps,places,marker,visualization",
+        v: "weekly",
+        language: "es",
+        loading: "async",
+      });
+
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.src = `/api/maps-proxy?${params.toString()}`;
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Failed to load Maps via proxy"));
+      document.head.appendChild(script);
+    });
+  })();
+
+  return window.__googleMapsProxyLoading;
 }
 
 // ─── Haversine distance in meters ─────────────────────────────────────────────
@@ -367,6 +421,22 @@ export default function Home() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
+  useEffect(() => {
+    const oldAuthFailure = window.gm_authFailure;
+    window.gm_authFailure = () => {
+      setLocationError(
+        "Conexión rechazada por Google Maps. Verifica que la API esté habilitada en Google Cloud y que las restricciones de la llave permitan este despliegue."
+      );
+      setStatus("error");
+      requestingLocationRef.current = false;
+      if (oldAuthFailure) oldAuthFailure();
+    };
+
+    return () => {
+      window.gm_authFailure = oldAuthFailure;
+    };
+  }, []);
+
   // ── Detect which comuna the user is in ───────────────────────────────────
   const detectComuna = useCallback((lat: number, lng: number) => {
     for (const comuna of CALI_COMUNAS) {
@@ -500,9 +570,13 @@ export default function Home() {
 
   // ── Init map ──────────────────────────────────────────────────────────────
   const initMap = async (lat: number, lng: number) => {
-    const { Map } = await importLibrary("maps");
-    await importLibrary("places");
-    await importLibrary("visualization");
+    if (!mapRef.current) return;
+
+    await loadGoogleMapsViaProxy();
+
+    const { Map } = await google.maps.importLibrary("maps") as google.maps.MapsLibrary;
+    await google.maps.importLibrary("places");
+    await google.maps.importLibrary("visualization");
 
     const center = { lat, lng };
 
@@ -529,7 +603,7 @@ export default function Home() {
       radius: 40,
     });
 
-    const { AdvancedMarkerElement, PinElement } = await importLibrary("marker") as google.maps.MarkerLibrary;
+    const { AdvancedMarkerElement, PinElement } = await google.maps.importLibrary("marker") as google.maps.MarkerLibrary;
 
     const userPin = new PinElement({
       background: "#3b82f6",
@@ -597,7 +671,14 @@ export default function Home() {
     setStatus("tracking");
 
     if (!mapInstance.current) {
-      await initMap(lat, lng);
+      try {
+        await initMap(lat, lng);
+      } catch (error) {
+        console.error("Map initialization error:", error);
+        requestingLocationRef.current = false;
+        setLocationError("No pudimos cargar Google Maps. Revisa la configuración de la API key en el servidor.");
+        setStatus("error");
+      }
     } else {
       const pos = { lat, lng };
       mapInstance.current.panTo(pos);
