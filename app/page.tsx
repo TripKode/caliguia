@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, type PointerEvent } from "rea
 import { AnimatePresence, motion } from "framer-motion";
 import Webcam from "react-webcam";
 import { AIFloatingIsland } from "../components/island/Island";
-import { useExperience, TOURISM_INTERESTS } from "../components/providers/ExperienceProvider";
+import { useExperience } from "../components/providers/ExperienceProvider";
 import { useVoiceNarrator, fetchNarration, type NarrationType } from "../components/providers/VoiceNarrator";
 
 declare global {
@@ -153,66 +153,68 @@ interface Landmark {
   type: NarrationType;
   icon: string;
   prompt: string;
+  description: string;
+  history: string;
   radiusM: number;
+  place_id?: string;
+  images: string[];
 }
 
-const CALI_LANDMARKS: Landmark[] = [
+// CALI_LANDMARKS now starts empty and populates dynamically
+const INITIAL_LANDMARKS: Landmark[] = [];
+
+interface CaliEvent {
+  id: string;
+  title: string;
+  organizer: string;
+  category: string;
+  time: string;
+  location: string;
+  description: string;
+  icon: string;
+}
+
+const CALI_EVENTS_TODAY: CaliEvent[] = [
   {
-    name: "La Ermita", lat: 3.4534, lng: -76.5383, type: "monument", icon: "⛪", radiusM: 250,
-    prompt: "El usuario acaba de pasar cerca de la Iglesia La Ermita en Cali, un templo neogótico icónico del siglo XX a orillas del río Cali."
+    id: "e1",
+    title: "Festival de Salsa en el Obrero",
+    organizer: "Secretaría de Cultura de Cali",
+    category: "Música / Salsa",
+    time: "18:00 - 22:00",
+    location: "Parque del Barrio Obrero",
+    description: "Orquestas en vivo y exhibición de baile estilo caleño. ¡Entrada libre!",
+    icon: "",
   },
   {
-    name: "San Antonio", lat: 3.4480, lng: -76.5430, type: "monument", icon: "🏛️", radiusM: 300,
-    prompt: "El usuario está en el barrio San Antonio de Cali, zona histórica con casas republicanas coloridas y una capilla colonial del siglo XVIII."
+    id: "e2",
+    title: "Tarde de Jazz en el Bulevar",
+    organizer: "Teatro Municipal Enrique Buenaventura",
+    category: "Música / Jazz",
+    time: "16:30 - 19:00",
+    location: "Bulevar del Río (Cerca a la Ermita)",
+    description: "Sesiones de improvisación con artistas locales e invitados internacionales.",
+    icon: "",
   },
   {
-    name: "Cristo Rey", lat: 3.4309, lng: -76.5597, type: "monument", icon: "✝️", radiusM: 400,
-    prompt: "El usuario puede ver el Cristo Rey, el monumento más icónico de Cali que corona el cerro Los Cristales a 1470 metros."
+    id: "e3",
+    title: "Ruta del Sabor: Galería Alameda",
+    organizer: "Asociación de Cocineras Tradicionales",
+    category: "Gastronomía",
+    time: "11:00 - 15:00",
+    location: "Galería Alameda - Pasillo Central",
+    description: "Degustación de platos típicos del Pacífico: Arroz de Mariscos y Lulada.",
+    icon: "",
   },
   {
-    name: "Museo de la Salsa", lat: 3.4502, lng: -76.5328, type: "monument", icon: "💃", radiusM: 200,
-    prompt: "El usuario está cerca del Museo de la Salsa en Cali, el corazón musical de la ciudad y patrimonio inmaterial de Colombia."
-  },
-  {
-    name: "Barrio Obrero", lat: 3.4491, lng: -76.5310, type: "monument", icon: "🎶", radiusM: 250,
-    prompt: "El usuario está en el Barrio Obrero, la cuna de la salsa caleña, lleno de salsotecas y cultura popular desde los años 60."
-  },
-  {
-    name: "La Topa Tolondra", lat: 3.4498, lng: -76.5335, type: "monument", icon: "🕺", radiusM: 200,
-    prompt: "El usuario pasa por La Topa Tolondra, una de las salsotecas más legendarias e históricas de Cali."
-  },
-  {
-    name: "Teatro Municipal", lat: 3.4521, lng: -76.5356, type: "monument", icon: "🎭", radiusM: 220,
-    prompt: "El usuario está frente al Teatro Municipal Enrique Buenaventura, joya arquitectónica y cultural del centro de Cali."
-  },
-  {
-    name: "Parque del Perro", lat: 3.4341, lng: -76.5398, type: "monument", icon: "🌳", radiusM: 220,
-    prompt: "El usuario está en el Parque del Perro en el barrio Granada, el epicentro bohemio y gastronómico del sur de Cali."
-  },
-  {
-    name: "Zoológico de Cali", lat: 3.4467, lng: -76.5262, type: "monument", icon: "🦁", radiusM: 300,
-    prompt: "El usuario está cerca del Zoológico de Cali, uno de los mejores de América Latina con más de 200 especies."
-  },
-  {
-    name: "Galería Alameda", lat: 3.4561, lng: -76.5358, type: "monument", icon: "🛍️", radiusM: 220,
-    prompt: "El usuario está en la Galería Alameda, el mercado popular más emblemático de Cali con frutas exóticas, carnes y tradición."
-  },
-  {
-    name: "Loma de la Cruz", lat: 3.4394, lng: -76.5495, type: "monument", icon: "🌄", radiusM: 280,
-    prompt: "El usuario está en la Loma de la Cruz, mirador natural con una vista panorámica de toda la ciudad de Cali."
-  },
-  {
-    name: "Río Pance", lat: 3.3850, lng: -76.5510, type: "monument", icon: "🏞️", radiusM: 350,
-    prompt: "El usuario está cerca del Río Pance, el destino natural favorito de los caleños para refrescarse los fines de semana."
-  },
-  {
-    name: "Unidad Deportiva", lat: 3.4294, lng: -76.5273, type: "monument", icon: "🏟️", radiusM: 350,
-    prompt: "El usuario está cerca de la Unidad Deportiva Alberto Galindo, el complejo deportivo más importante de Cali."
-  },
-  {
-    name: "Ciudad Jardín", lat: 3.3950, lng: -76.5350, type: "monument", icon: "🌿", radiusM: 300,
-    prompt: "El usuario está en Ciudad Jardín, la zona residencial más tranquila y verde del sur de Cali."
-  },
+    id: "e4",
+    title: "Cine bajo las Estrellas",
+    organizer: "Museo La Tertulia",
+    category: "Cine",
+    time: "19:30 - 21:30",
+    location: "Jardines de La Tertulia",
+    description: "Proyección de cortos colombianos premiados en finales internacionales.",
+    icon: "",
+  }
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -241,6 +243,7 @@ interface ComunaData {
 }
 
 type Status = "idle" | "loading" | "tracking" | "denied" | "error";
+type ActiveTab = "local" | "places" | "zones" | "experience";
 
 type CachedLocation = {
   lat: number;
@@ -314,6 +317,32 @@ function writeCachedLocation(location: Omit<CachedLocation, "savedAt">) {
   }
 }
 
+// Mapeo de riesgo basado en el número oficial de comuna
+const COMUNA_RISK_MAP: Record<number, { risk: "safe" | "medium" | "high" | "low"; description: string }> = {
+  1: { risk: "high", description: "Zona occidental, ladera. Precaución en zonas altas." },
+  2: { risk: "safe", description: "Zona norte, residencial y gastronómica de alto nivel." },
+  3: { risk: "medium", description: "Centro histórico y cultural. Comercio activo." },
+  4: { risk: "medium", description: "Zona norte-centro, residencial tradicional." },
+  5: { risk: "medium", description: "Zona norte-oriental, mezcla industrial y residencial." },
+  6: { risk: "high", description: "Nororiente. Se recomienda transitar por vías principales." },
+  7: { risk: "high", description: "Nororiente. Zona con alta densidad poblacional." },
+  8: { risk: "medium", description: "Centro-oriente, comercial y base aérea." },
+  9: { risk: "low", description: "Centro comercial denso y barrios tradicionales." },
+  10: { risk: "medium", description: "Corazón comercial de la ciudad." },
+  11: { risk: "low", description: "Zona residencial del sur-oriente." },
+  12: { risk: "medium", description: "Sur-oriente, zona residencial estrato medio-bajo." },
+  13: { risk: "high", description: "Distrito de Aguablanca. Alta precaución." },
+  14: { risk: "high", description: "Distrito de Aguablanca. Alta precaución." },
+  15: { risk: "high", description: "Distrito de Aguablanca. Zona crítica." },
+  16: { risk: "medium", description: "Sur, zona de clínicas y barrios residenciales." },
+  17: { risk: "low", description: "Sur, zona universitaria y residencial de nivel alto." },
+  18: { risk: "medium", description: "Ladera sur, zona mixta." },
+  19: { risk: "safe", description: "Zona sur-occidental, deportiva y residencial segura." },
+  20: { risk: "high", description: "Siloé y ladera occidental. Alta precaución." },
+  21: { risk: "high", description: "Extremo nororiente. Zona vulnerable." },
+  22: { risk: "safe", description: "Pance y Ciudad Jardín. La zona más exclusiva y segura." },
+};
+
 function hasLocationOptIn() {
   try {
     return (
@@ -324,210 +353,6 @@ function hasLocationOptIn() {
     return false;
   }
 }
-
-// ─── Cali Comunas — polígonos aproximados basados en geografía real ───────────
-// Coordenadas [lat, lng] de cada comuna. Centro de Cali: 3.4516, -76.5320
-const CALI_COMUNAS: ComunaData[] = [
-  {
-    id: 1, name: "Comuna 1 — Sucre", risk: "high",
-    description: "Zona occidental, ladera. Alto índice de inseguridad.",
-    barrios: ["Terrón Colorado", "Bello Horizonte", "Vista Hermosa", "Aguacatal"],
-    coords: [
-      [3.490, -76.560], [3.500, -76.548], [3.510, -76.540], [3.505, -76.528],
-      [3.495, -76.525], [3.480, -76.535], [3.475, -76.550], [3.482, -76.562],
-    ],
-  },
-  {
-    id: 2, name: "Comuna 2 — Santa Mónica", risk: "safe",
-    description: "Zona norte, estrato alto. Granada, Juanambú, Versalles.",
-    barrios: ["Granada", "Juanambú", "Santa Mónica", "Normandía", "Versalles"],
-    coords: [
-      [3.460, -76.548], [3.475, -76.548], [3.480, -76.535], [3.495, -76.525],
-      [3.490, -76.510], [3.475, -76.508], [3.460, -76.515], [3.450, -76.530],
-    ],
-  },
-  {
-    id: 3, name: "Comuna 3 — Santa Rosa", risk: "medium",
-    description: "Centro histórico. Comercio activo, zona mixta.",
-    barrios: ["San Pedro", "San Nicolás", "Alameda", "Bretaña", "Junín"],
-    coords: [
-      [3.448, -76.540], [3.460, -76.548], [3.450, -76.530], [3.445, -76.520],
-      [3.438, -76.518], [3.435, -76.528], [3.440, -76.540],
-    ],
-  },
-  {
-    id: 4, name: "Comuna 4 — Fátima", risk: "medium",
-    description: "Norte centro. Barrios residenciales y comerciales.",
-    barrios: ["Fátima", "San Francisco", "Jorge Isaacs", "Santander"],
-    coords: [
-      [3.460, -76.515], [3.475, -76.508], [3.480, -76.495], [3.468, -76.492],
-      [3.455, -76.498], [3.448, -76.510], [3.450, -76.520],
-    ],
-  },
-  {
-    id: 5, name: "Comuna 5 — Guabal", risk: "medium",
-    description: "Zona norte-oriental. Industrial y residencial.",
-    barrios: ["Guabal", "El Sena", "Salomia", "Ignacio Rengifo"],
-    coords: [
-      [3.475, -76.508], [3.490, -76.510], [3.495, -76.495], [3.485, -76.485],
-      [3.472, -76.488], [3.462, -76.492], [3.468, -76.492],
-    ],
-  },
-  {
-    id: 6, name: "Comuna 6 — Flores", risk: "high",
-    description: "Nororiente. Vulnerabilidad social media-alta.",
-    barrios: ["Flores", "Petecuy", "El Poblado", "Andrés Sanín"],
-    coords: [
-      [3.490, -76.510], [3.505, -76.508], [3.510, -76.492], [3.500, -76.480],
-      [3.488, -76.478], [3.480, -76.485], [3.485, -76.485],
-    ],
-  },
-  {
-    id: 7, name: "Comuna 7 — Urb. Calimío", risk: "high",
-    description: "Nororiente. Zona con problemáticas de seguridad.",
-    barrios: ["Calimío", "Desepaz", "Villa del Lago"],
-    coords: [
-      [3.505, -76.508], [3.520, -76.505], [3.525, -76.488], [3.512, -76.478],
-      [3.500, -76.480], [3.510, -76.492],
-    ],
-  },
-  {
-    id: 8, name: "Comuna 8 — Villanueva", risk: "medium",
-    description: "Centro-oriente. Zona mixta residencial-comercial.",
-    barrios: ["Villanueva", "La Base", "El Troncal", "San Cayetano"],
-    coords: [
-      [3.448, -76.518], [3.455, -76.498], [3.448, -76.490], [3.438, -76.488],
-      [3.430, -76.498], [3.432, -76.510], [3.438, -76.518],
-    ],
-  },
-  {
-    id: 9, name: "Comuna 9 — Pedro Claver", risk: "low",
-    description: "Centro. Zona comercial densa, relativamente segura.",
-    barrios: ["Alameda", "San Pedro Claver", "San Carlos", "La Merced"],
-    coords: [
-      [3.438, -76.518], [3.448, -76.518], [3.440, -76.540], [3.435, -76.528],
-      [3.428, -76.530], [3.430, -76.518],
-    ],
-  },
-  {
-    id: 10, name: "Comuna 10 — El Centro", risk: "medium",
-    description: "Centro histórico de Cali. Alto tráfico peatonal.",
-    barrios: ["El Centro", "San Bosco", "San Judas", "Obrero"],
-    coords: [
-      [3.448, -76.518], [3.455, -76.498], [3.445, -76.495], [3.438, -76.500],
-      [3.430, -76.505], [3.428, -76.518], [3.438, -76.518],
-    ],
-  },
-  {
-    id: 11, name: "Comuna 11 — San Cristóbal", risk: "low",
-    description: "Centro-occidente. Residencial con buena convivencia.",
-    barrios: ["San Cristóbal", "San Cayetano", "San Benito"],
-    coords: [
-      [3.435, -76.540], [3.448, -76.540], [3.448, -76.518], [3.438, -76.518],
-      [3.428, -76.518], [3.425, -76.530], [3.428, -76.540],
-    ],
-  },
-  {
-    id: 12, name: "Comuna 12 — Bel. Caicedo", risk: "medium",
-    description: "Sur-oriente. Zona de estrato medio-bajo.",
-    barrios: ["Belisario Caicedo", "Benjamín Herrera", "Municipal"],
-    coords: [
-      [3.430, -76.498], [3.438, -76.488], [3.430, -76.480], [3.420, -76.480],
-      [3.418, -76.492], [3.422, -76.500],
-    ],
-  },
-  {
-    id: 13, name: "Comuna 13 — El Poblado", risk: "high",
-    description: "Oriente. Distrito de Aguablanca, alta vulnerabilidad.",
-    barrios: ["El Poblado", "Marroquín I", "Marroquín II", "Urbanización Cali"],
-    coords: [
-      [3.440, -76.488], [3.448, -76.490], [3.455, -76.498], [3.455, -76.480],
-      [3.442, -76.472], [3.432, -76.475], [3.430, -76.480],
-    ],
-  },
-  {
-    id: 14, name: "Comuna 14 — Ladera", risk: "high",
-    description: "Oriente. Comuneros, alta tasa de inseguridad.",
-    barrios: ["Comuneros I", "Comuneros II", "Vallado", "Mojica"],
-    coords: [
-      [3.420, -76.480], [3.430, -76.480], [3.432, -76.475], [3.428, -76.462],
-      [3.415, -76.462], [3.412, -76.472],
-    ],
-  },
-  {
-    id: 15, name: "Comuna 15 — Quint. Lame", risk: "high",
-    description: "Oriente Distrito Aguablanca. Zona crítica.",
-    barrios: ["Mojica", "El Vallado", "Laureano Gómez", "Ciudad Córdoba"],
-    coords: [
-      [3.432, -76.475], [3.442, -76.472], [3.445, -76.460], [3.435, -76.452],
-      [3.422, -76.455], [3.415, -76.462], [3.428, -76.462],
-    ],
-  },
-  {
-    id: 16, name: "Comuna 16 — Tequendama", risk: "medium",
-    description: "Sur. Zona residencial de estrato medio.",
-    barrios: ["Tequendama", "La Republica", "Alborada", "Álvarez"],
-    coords: [
-      [3.418, -76.492], [3.420, -76.480], [3.412, -76.472], [3.405, -76.478],
-      [3.405, -76.492], [3.410, -76.498],
-    ],
-  },
-  {
-    id: 17, name: "Comuna 17 — Meléndez", risk: "low",
-    description: "Sur. Estrato medio-alto. Unicentro, Valle del Lili.",
-    barrios: ["Los Sauces", "Caney", "Ciudad Jardín", "Unicentro"],
-    coords: [
-      [3.400, -76.560], [3.415, -76.548], [3.418, -76.530], [3.410, -76.515],
-      [3.400, -76.510], [3.390, -76.518], [3.388, -76.540], [3.395, -76.558],
-    ],
-  },
-  {
-    id: 18, name: "Comuna 18 — El Cañaveral", risk: "medium",
-    description: "Sur-occidente. Ladera sur, estrato mixto.",
-    barrios: ["Meléndez", "El Jordán", "Nápoles", "Santa Isabel"],
-    coords: [
-      [3.415, -76.548], [3.425, -76.540], [3.428, -76.540], [3.425, -76.530],
-      [3.418, -76.530], [3.410, -76.515], [3.400, -76.510],
-      [3.400, -76.530], [3.408, -76.545],
-    ],
-  },
-  {
-    id: 19, name: "Comuna 19 — Cristóbal Colón", risk: "safe",
-    description: "Centro-sur. Zona segura, estratos altos. El Peñón, San Fernando.",
-    barrios: ["San Fernando", "El Peñón", "Camilo Torres", "Miraflores"],
-    coords: [
-      [3.428, -76.540], [3.435, -76.540], [3.428, -76.530], [3.425, -76.520],
-      [3.418, -76.515], [3.410, -76.515], [3.418, -76.530], [3.425, -76.540],
-    ],
-  },
-  {
-    id: 20, name: "Comuna 20 — Siloé", risk: "high",
-    description: "Ladera occidental. Zona crítica de seguridad.",
-    barrios: ["Siloé", "El Cortijo", "Brisas de Mayo", "Lleras Camargo"],
-    coords: [
-      [3.450, -76.570], [3.462, -76.562], [3.460, -76.548], [3.448, -76.540],
-      [3.440, -76.548], [3.438, -76.558], [3.442, -76.568],
-    ],
-  },
-  {
-    id: 21, name: "Comuna 21 — Las Orquídeas", risk: "high",
-    description: "Nororiente extremo. Alta vulnerabilidad social.",
-    barrios: ["Las Orquídeas", "El Vergel", "Potrero Grande", "Desepaz"],
-    coords: [
-      [3.520, -76.505], [3.535, -76.500], [3.538, -76.480], [3.525, -76.472],
-      [3.512, -76.478], [3.525, -76.488],
-    ],
-  },
-  {
-    id: 22, name: "Comuna 22 — Ciudad Jardín", risk: "safe",
-    description: "Sur extremo. Zona más segura y exclusiva de Cali.",
-    barrios: ["Ciudad Jardín", "Pance", "La Hacienda", "Jockey Club"],
-    coords: [
-      [3.388, -76.540], [3.390, -76.518], [3.380, -76.512], [3.370, -76.520],
-      [3.368, -76.542], [3.375, -76.558], [3.382, -76.558],
-    ],
-  },
-];
 
 // ─── Risk colors ──────────────────────────────────────────────────────────────
 const RISK_CONFIG: Record<RiskLevel, { fill: string; stroke: string; fillOpacity: number; label: string; color: string }> = {
@@ -592,9 +417,55 @@ function getCategoryLabel(types: string[]): string {
   return "Negocio";
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
 export default function Home() {
   const { experienceMode, selectedInterests, travelGroup } = useExperience();
+  const [comunas, setComunas] = useState<ComunaData[]>([]);
+
+  // Fetch Comunas from IDESC
+  useEffect(() => {
+    const fetchComunas = async () => {
+      const CACHE_KEY = "caliguia_comunas_data";
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        try {
+          setComunas(JSON.parse(cached));
+          return;
+        } catch (e) {
+          console.error("Cache error", e);
+        }
+      }
+
+      try {
+        const res = await fetch("/api/comunas");
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const transformed: ComunaData[] = data.features.map((f: any) => {
+          const id = parseInt(f.properties.comuna);
+          const riskInfo = COMUNA_RISK_MAP[id] || { risk: "medium", description: "Información en proceso." };
+          const name = f.properties.nombre ? (f.properties.nombre.includes("Comuna") ? f.properties.nombre : `Comuna ${id} — ${f.properties.nombre}`) : `Comuna ${id}`;
+
+          let coords: [number, number][] = [];
+          if (f.geometry.type === "Polygon") {
+            coords = f.geometry.coordinates[0].map((c: any) => [c[1], c[0]]);
+          } else if (f.geometry.type === "MultiPolygon") {
+            // Flatten first polygon of multipolygon for simplicity in this view
+            coords = f.geometry.coordinates[0][0].map((c: any) => [c[1], c[0]]);
+          }
+
+          return { id, name, risk: riskInfo.risk, description: riskInfo.description, barrios: [], coords };
+        });
+
+        setComunas(transformed);
+        localStorage.setItem(CACHE_KEY, JSON.stringify(transformed));
+      } catch (err) {
+        console.error("Fetch Comunas failed:", err);
+      }
+    };
+    fetchComunas();
+  }, []);
+
+  const CALI_COMUNAS = comunas;
   const webcamRef = useRef<Webcam>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
@@ -607,6 +478,7 @@ export default function Home() {
   const polygonsRef = useRef<google.maps.Polygon[]>([]);
   const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const routePolylineRef = useRef<google.maps.Polyline | null>(null);
 
   const dragStartY = useRef<number>(0);
   const drawerStartH = useRef<number>(0);
@@ -618,18 +490,24 @@ export default function Home() {
   const [locationDebug, setLocationDebug] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [places, setPlaces] = useState<NearbyPlace[]>([]);
+  const [localLandmarks, setLocalLandmarks] = useState<Landmark[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
+  const [loadingLandmarks, setLoadingLandmarks] = useState(false);
   const [drawerH, setDrawerH] = useState(280);
   const [isDrawerDragging, setIsDrawerDragging] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [layerMode, setLayerMode] = useState<LayerMode>("none");
   const [currentComuna, setCurrentComuna] = useState<ComunaData | null>(null);
-  const [activeTab, setActiveTab] = useState<"places" | "zones" | "experience">("places");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("local");
+  const [expandedLandmark, setExpandedLandmark] = useState<string | null>(null);
+  const [currentImageIdx, setCurrentImageIdx] = useState(0);
   const [arCameraError, setArCameraError] = useState<string | null>(null);
   const [arFacingMode, setArFacingMode] = useState<"environment" | "user">("environment");
   const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(0.05);
   const [arZoomSupported, setArZoomSupported] = useState(false);
   const [voiceMuted, setVoiceMuted] = useState(false);
+  const [showZoneAlert, setShowZoneAlert] = useState(true);
+  const lastZoneId = useRef<number | null>(null);
 
   // Voice narrator
   const { isSpeaking: narratorSpeaking, currentNarration, experienceLog, speak, unlockSpeech, speechUnlocked, voicePreference } = useVoiceNarrator({ muted: voiceMuted });
@@ -705,7 +583,7 @@ export default function Home() {
       }
     }
     setCurrentComuna(null);
-  }, []);
+  }, [CALI_COMUNAS]);
 
   // ── Draw risk layer polygons ───────────────────────────────────────────────
   const drawRiskLayer = useCallback((map: google.maps.Map) => {
@@ -751,7 +629,7 @@ export default function Home() {
 
       polygonsRef.current.push(polygon);
     });
-  }, []);
+  }, [CALI_COMUNAS]);
 
   // ── Draw heatmap layer ────────────────────────────────────────────────────
   const drawHeatmapLayer = useCallback((map: google.maps.Map) => {
@@ -807,7 +685,7 @@ export default function Home() {
     heatmapRef.current.addListener("map_changed", () => {
       if (!heatmapRef.current?.getMap()) google.maps.event.removeListener(zoomListener);
     });
-  }, []);
+  }, [CALI_COMUNAS]);
 
   // ── Toggle layers ──────────────────────────────────────────────────────────
   const applyLayer = useCallback((mode: LayerMode, map: google.maps.Map) => {
@@ -880,6 +758,104 @@ export default function Home() {
     }
   }, []);
 
+  // ── Dynamic Landmark Discovery ─────────────────────────────────────────────
+  const fetchWikipediaSummary = async (title: string): Promise<{ extract: string; images: string[] } | null> => {
+    try {
+      const searchUrl = `https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title + " Cali")}&format=json&origin=*`;
+      const searchResp = await fetch(searchUrl);
+      const searchData = await searchResp.json();
+
+      if (!searchData.query?.search?.length) return null;
+
+      const bestTitle = searchData.query.search[0].title;
+      const summaryUrl = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bestTitle)}`;
+      const mediaUrl = `https://es.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(bestTitle)}`;
+
+      const [summaryResp, mediaResp] = await Promise.all([
+        fetch(summaryUrl),
+        fetch(mediaUrl).catch(() => null)
+      ]);
+
+      if (!summaryResp.ok) return null;
+      const summaryData = await summaryResp.json();
+
+      let images: string[] = [];
+      if (summaryData.originalimage?.source) images.push(summaryData.originalimage.source);
+
+      if (mediaResp?.ok) {
+        const mediaData = await mediaResp.json();
+        const extraImages = mediaData.items
+          ?.filter((item: any) => item.type === "image")
+          ?.map((item: any) => item.srcset?.[0]?.src || item.src)
+          ?.filter((src: string) => src && !images.includes(src))
+          ?.slice(0, 5) || [];
+        images = [...images, ...extraImages];
+      }
+
+      return {
+        extract: summaryData.extract,
+        images,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchLocalLandmarks = useCallback(async (lat: number, lng: number) => {
+    if (typeof google === "undefined" || !google.maps.places?.Place?.searchNearby) return;
+    if (!isInsideCaliBounds(lat, lng)) return;
+
+    setLoadingLandmarks(true);
+    try {
+      const { places: foundPlaces } = await google.maps.places.Place.searchNearby({
+        fields: ["id", "displayName", "location", "types", "editorialSummary"],
+        locationRestriction: { center: { lat, lng }, radius: 1000 },
+        includedPrimaryTypes: ["tourist_attraction", "museum", "church", "art_gallery", "historical_landmark"],
+        maxResultCount: 15,
+        language: "es",
+        region: "CO",
+      });
+
+      const newLandmarks: Landmark[] = await Promise.all(foundPlaces.map(async (p): Promise<Landmark> => {
+        const name = p.displayName ?? "Lugar Histórico";
+        const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
+
+        let history = p.editorialSummary;
+        let images: string[] = [];
+
+        const wikiData = await fetchWikipediaSummary(name);
+        if (wikiData) {
+          history = wikiData.extract;
+          images = wikiData.images;
+        }
+
+        if (!history) {
+          history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
+        }
+
+        return {
+          name,
+          lat: p.location!.lat(),
+          lng: p.location!.lng(),
+          type: "monument",
+          icon: "",
+          description: typeLabel,
+          history: history.length > 500 ? history.substring(0, 497) + "..." : history,
+          radiusM: 200,
+          place_id: p.id,
+          images,
+          prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
+        };
+      }));
+
+      setLocalLandmarks(newLandmarks);
+    } catch (error) {
+      console.error("Landmark discovery error:", error);
+    } finally {
+      setLoadingLandmarks(false);
+    }
+  }, [currentComuna]);
+
   // ── Init map ──────────────────────────────────────────────────────────────
   const initMap = async (lat: number, lng: number) => {
     if (!mapRef.current) return;
@@ -905,6 +881,15 @@ export default function Home() {
     });
 
     infoWindowRef.current = new google.maps.InfoWindow();
+
+    // Route Polyline (Modern way)
+    routePolylineRef.current = new google.maps.Polyline({
+      map: mapInstance.current,
+      strokeColor: "#3b82f6",
+      strokeWeight: 6,
+      strokeOpacity: 0.8,
+      visible: false,
+    });
 
     circleRef.current = new google.maps.Circle({
       map: mapInstance.current,
@@ -1132,6 +1117,29 @@ export default function Home() {
     if (mapInstance.current) applyLayer(layerMode, mapInstance.current);
   }, [layerMode, applyLayer]);
 
+  // Re-detect comuna, landmarks and AUTO-CENTER map when position updates
+  useEffect(() => {
+    if (coords) {
+      detectComuna(coords.lat, coords.lng);
+      fetchLocalLandmarks(coords.lat, coords.lng);
+
+      // Auto-center map on user location
+      if (mapInstance.current) {
+        mapInstance.current.panTo({ lat: coords.lat, lng: coords.lng });
+      }
+    }
+  }, [coords, CALI_COMUNAS, detectComuna, fetchLocalLandmarks]);
+
+  // Show alert again when entering a NEW zone
+  useEffect(() => {
+    if (currentComuna && currentComuna.id !== lastZoneId.current) {
+      lastZoneId.current = currentComuna.id;
+      setShowZoneAlert(true);
+    } else if (!currentComuna) {
+      lastZoneId.current = null;
+    }
+  }, [currentComuna]);
+
   // Restore the last accepted location first, then refresh silently only when permission is already granted.
   useEffect(() => {
     let isMounted = true;
@@ -1255,13 +1263,15 @@ export default function Home() {
     }
 
     // 4. Landmark proximity (narrated once per session)
-    for (const landmark of CALI_LANDMARKS) {
+    // Combine dynamic landmarks with any static ones we might add
+    const currentViewLandmarks = localLandmarks;
+    for (const landmark of currentViewLandmarks) {
       if (spokenLandmarks.current.has(landmark.name)) continue;
       const dist = haversineDistance(lat, lng, landmark.lat, landmark.lng);
       if (dist <= landmark.radiusM) {
         spokenLandmarks.current.add(landmark.name);
-        fetchNarration(landmark.prompt, landmark.type).then(text => {
-          if (text) speakRef.current({ type: landmark.type, text, title: landmark.name, icon: landmark.icon });
+        fetchNarration(landmark.prompt, "monument").then(text => {
+          if (text) speakRef.current({ type: "monument", text, title: landmark.name, icon: landmark.icon });
         }).catch(() => null);
         break;
       }
@@ -1336,17 +1346,19 @@ export default function Home() {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Tabs + voice mute */}
       <div className="flex items-center gap-1 px-4 pt-2 pb-0 shrink-0">
-        {(["places", "zones", "experience"] as const).map(tab => (
+        {(["local", "places", "zones", "experience"] as const).map(tab => (
           <motion.button
             key={tab}
             onClick={() => setActiveTab(tab)}
             whileTap={{ scale: 0.97 }}
-            className={`relative px-2 py-1.5 rounded-lg text-[10px] font-bold transition-colors flex-1 flex items-center justify-center gap-1 ${activeTab === tab ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
+            className={`relative px-1 py-1.5 rounded-lg text-[9px] font-bold transition-colors flex-1 flex items-center justify-center gap-1 ${activeTab === tab ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
               }`}
           >
-            <span className="truncate">{tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Experiencia"}</span>
+            <span className="truncate">
+              {tab === "local" ? "Local" : tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Agenda"}
+            </span>
             {tab === "experience" && experienceLog.length > 0 && (
-              <span className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500 text-white text-[8px] font-black">
+              <span className="shrink-0 inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-500 text-white text-[7px] font-black">
                 {experienceLog.length}
               </span>
             )}
@@ -1362,6 +1374,108 @@ export default function Home() {
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
+        {activeTab === "local" && (
+          <motion.div
+            key="local"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
+            <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0 bg-amber-50/30">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.15em] text-amber-600">Patrimonio</p>
+                <p className="text-[14px] font-black text-zinc-800 mt-0.5">
+                  {currentComuna ? currentComuna.name : "Explorando Cali"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Escaneo</p>
+                <p className="text-[13px] font-black text-blue-500">1 km</p>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
+              <div className="flex flex-col gap-3">
+                {loadingLandmarks && localLandmarks.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                    <div className="w-8 h-8 border-3 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
+                    <p className="text-[12px] font-bold">Escaneando historia...</p>
+                  </div>
+                )}
+                {localLandmarks.map((landmark, idx) => (
+                  <motion.div
+                    key={landmark.name}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase tracking-wider border border-amber-100">
+                            {landmark.description}
+                          </span>
+                        </div>
+                        <p className="text-[15px] font-black text-zinc-800 leading-tight">{landmark.name}</p>
+                        <p className={`text-[11px] text-zinc-500 mt-2 leading-relaxed font-medium transition-all duration-300 ${expandedLandmark === landmark.name ? "" : "line-clamp-2"}`}>
+                          {landmark.history}
+                        </p>
+
+                        <div className="flex items-center gap-2 mt-4">
+                          <button
+                            onClick={async () => {
+                              if (!coords || !mapInstance.current) return;
+                              const directionsService = new google.maps.DirectionsService();
+                              directionsService.route(
+                                {
+                                  origin: { lat: coords.lat, lng: coords.lng },
+                                  destination: { lat: landmark.lat, lng: landmark.lng },
+                                  travelMode: google.maps.TravelMode.WALKING,
+                                },
+                                (result, status) => {
+                                  if (status === "OK" && routePolylineRef.current && result) {
+                                    routePolylineRef.current.setPath(result.routes[0].overview_path);
+                                    routePolylineRef.current.setVisible(true);
+                                    const bounds = result.routes[0].bounds;
+                                    mapInstance.current?.fitBounds(bounds);
+                                  } else {
+                                    console.error("Route failed:", status);
+                                    const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
+                                    window.open(url, '_blank');
+                                    if (status === "REQUEST_DENIED") {
+                                      alert("¡Aviso! La 'Directions API' no está habilitada en tu clave de Google. He abierto la navegación en una nueva pestaña.");
+                                    }
+                                  }
+                                }
+                              );
+                            }}
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 transition-all shadow-sm shadow-blue-500/20 active:scale-95"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                            Ver Ruta
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setCurrentImageIdx(0);
+                              setExpandedLandmark(landmark.name);
+                            }}
+                            className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-[11px] font-bold hover:bg-zinc-200 transition-all active:scale-95"
+                          >
+                            Expandir
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
         {activeTab === "places" && (
           <motion.div
             key="places"
@@ -1475,21 +1589,17 @@ export default function Home() {
             {/* Header */}
             <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Tu experiencia</p>
-                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                  {experienceLog.length > 0
-                    ? `${experienceLog.length} ${experienceLog.length === 1 ? "lugar visitado" : "lugares visitados"}`
-                    : "Explorando Cali"}
+                <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-500">Agenda Cali</p>
+                <p className="text-[14px] font-black text-zinc-800 mt-0.5">
+                  {CALI_EVENTS_TODAY.length} eventos para hoy
                 </p>
               </div>
-              {experienceLog.length > 0 && (
-                <div className="text-right">
-                  <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Intereses</p>
-                  <p className="text-[12px] font-semibold text-blue-500">
-                    {selectedInterests.map(i => TOURISM_INTERESTS[i]?.label).filter(Boolean).join(" · ")}
-                  </p>
-                </div>
-              )}
+              <div className="text-right">
+                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Fecha</p>
+                <p className="text-[12px] font-black text-zinc-800">
+                  Abril 30, 2026
+                </p>
+              </div>
             </div>
 
             {/* Current narration banner */}
@@ -1537,37 +1647,52 @@ export default function Home() {
               )}
             </AnimatePresence>
 
-            {/* Experience log */}
+            {/* Experience log / Events */}
             <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
-              {experienceLog.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
-                  <div className="w-12 h-12 rounded-2xl bg-blue-500/8 border border-blue-500/10 flex items-center justify-center text-2xl">
-                    🗺️
-                  </div>
-                  <div>
-                    <p className="text-[13px] font-semibold text-zinc-600">Comienza a explorar</p>
-                    <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">
-                      A medida que te muevas por Cali, CaliGuía te irá narrando los lugares que vayas encontrando.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 justify-center mt-1">
-                    {selectedInterests.map(id => (
-                      <span key={id} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/8 text-blue-600 border border-blue-500/12">
-                        {TOURISM_INTERESTS[id]?.label}
-                      </span>
-                    ))}
-                  </div>
-                  {travelGroup && (
-                    <p className="text-[10px] text-zinc-400">
-                      {travelGroup === "solo" ? "Solo" : travelGroup === "pareja" ? "En pareja" : travelGroup === "familia" ? "En familia" : "En grupo"}
-                    </p>
-                  )}
+              <div className="mb-6">
+                <div className="flex flex-col gap-2">
+                  {CALI_EVENTS_TODAY.map((event, idx) => (
+                    <motion.div
+                      key={event.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
+                    >
+                      <div className="flex items-start gap-3">
+                        {event.icon && (
+                          <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center text-xl shrink-0 group-hover:scale-110 transition-transform">
+                            {event.icon}
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-1 min-w-0 flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                              {event.category}
+                            </span>
+                            <span className="text-[10px] font-bold text-zinc-400">{event.time}</span>
+                          </div>
+                          <p className="text-[14px] font-black text-zinc-800 leading-tight">{event.title}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="text-[10px] font-bold text-zinc-400">Por:</span>
+                            <span className="text-[10px] font-bold text-zinc-600 truncate">{event.organizer}</span>
+                          </div>
+                          <div className="flex items-start gap-1 mt-1 text-zinc-500">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="shrink-0 mt-0.5"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                            <span className="text-[10px] font-medium leading-tight">{event.location}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
                 </div>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2">
-                    {selectedInterests.map(i => TOURISM_INTERESTS[i]?.label).filter(Boolean).join(" · ")} · {travelGroup === "solo" ? "Solo" : travelGroup === "pareja" ? "En pareja" : travelGroup === "familia" ? "En familia" : "En grupo"}
-                  </p>
+              </div>
+
+
+
+              {experienceLog.length > 0 && (
+                <div className="flex flex-col gap-1 border-t border-black/5 pt-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2">Recorrido reciente</p>
                   {experienceLog.map((item, idx) => (
                     <motion.div
                       key={item.id}
@@ -1609,45 +1734,53 @@ export default function Home() {
           >
             {/* Current zone banner */}
             <AnimatePresence initial={false}>
-              {currentComuna && (
+              {currentComuna && showZoneAlert && (
                 <motion.div
                   className="mx-4 mt-3 shrink-0"
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.18 }}
                 >
                   <div
-                    className="rounded-xl px-4 py-3 border"
+                    className="relative rounded-xl px-4 py-3 border overflow-hidden"
                     style={{
                       background: `${RISK_CONFIG[currentComuna.risk].fill}18`,
                       borderColor: `${RISK_CONFIG[currentComuna.risk].stroke}30`,
                     }}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500">Tu zona actual</p>
-                      <span
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                        style={{ background: `${RISK_CONFIG[currentComuna.risk].fill}25`, color: RISK_CONFIG[currentComuna.risk].color }}
-                      >
-                        Riesgo {RISK_CONFIG[currentComuna.risk].label}
-                      </span>
+                    <button
+                      onClick={() => setShowZoneAlert(false)}
+                      className="absolute top-2 right-2 p-1 rounded-full hover:bg-black/5 text-zinc-400"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+
+                    <div className="flex flex-col gap-1 pr-6">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.07em] text-zinc-400">Tu zona actual</p>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-[15px] font-black text-zinc-800 leading-tight">{currentComuna.name}</p>
+                        <span
+                          className="text-[9px] font-black px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap"
+                          style={{ background: `${RISK_CONFIG[currentComuna.risk].fill}25`, color: RISK_CONFIG[currentComuna.risk].color }}
+                        >
+                          RIESGO {RISK_CONFIG[currentComuna.risk].label.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed line-clamp-2">{currentComuna.description}</p>
                     </div>
-                    <p className="text-[14px] font-bold text-zinc-800">{currentComuna.name}</p>
-                    <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{currentComuna.description}</p>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Legend */}
-            <div className="px-5 pt-4 pb-2 shrink-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-3">Leyenda</p>
-              <div className="grid grid-cols-2 gap-2">
+            {/* Legend - Compact Row */}
+            <div className="px-4 pt-4 pb-1 shrink-0">
+              <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar pb-2">
                 {(Object.entries(RISK_CONFIG) as [RiskLevel, typeof RISK_CONFIG[RiskLevel]][]).map(([level, cfg]) => (
-                  <div key={level} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-sm shrink-0" style={{ background: cfg.fill, border: `1px solid ${cfg.stroke}` }} />
-                    <span className="text-[11px] font-medium text-zinc-600">Riesgo {cfg.label}</span>
+                  <div key={level} className="flex items-center gap-1.5 shrink-0 bg-white border border-black/5 px-2 py-1.5 rounded-lg shadow-sm">
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cfg.fill, border: `1px solid ${cfg.stroke}` }} />
+                    <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-tighter whitespace-nowrap">{cfg.label}</span>
                   </div>
                 ))}
               </div>
@@ -1902,6 +2035,7 @@ export default function Home() {
           )}
         </div>
       )}
+
       {/* ── Voice Permission Modal ── */}
       <AnimatePresence>
         {voicePreference === "unknown" && (
@@ -1918,7 +2052,7 @@ export default function Home() {
             >
               <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
                   <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                   <line x1="12" y1="19" x2="12" y2="22" />
                   <line x1="8" y1="22" x2="16" y2="22" />
@@ -1945,6 +2079,147 @@ export default function Home() {
                   No, tal vez luego
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Landmark Details Modal ── */}
+      <AnimatePresence>
+        {expandedLandmark && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-110 flex items-center justify-center bg-black/60 backdrop-blur-md px-6"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-lg bg-white rounded-[32px] max-h-[80vh] overflow-hidden flex flex-col shadow-2xl relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const landmark = localLandmarks.find(l => l.name === expandedLandmark);
+                if (!landmark) return null;
+
+                return (
+                  <>
+                    {/* Header with close button */}
+                    <div className="absolute top-4 right-4 z-20">
+                      <button
+                        onClick={() => setExpandedLandmark(null)}
+                        className="w-10 h-10 rounded-full bg-black/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/40 transition-colors"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      </button>
+                    </div>
+
+                    <div className="overflow-y-auto flex-1">
+                      {/* Image Gallery */}
+                      {landmark.images.length > 0 && (
+                        <div className="relative group">
+                          <div className="relative aspect-4/3 bg-zinc-100 overflow-hidden">
+                            <motion.img
+                              key={currentImageIdx}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              src={landmark.images[currentImageIdx]}
+                              alt={landmark.name}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />
+
+                            <div className="absolute bottom-6 left-6 right-6 text-white">
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-1 block">Patrimonio de Cali</span>
+                              <h2 className="text-2xl font-black leading-tight">{landmark.name}</h2>
+                            </div>
+                          </div>
+
+                          {landmark.images.length > 1 && (
+                            <>
+                              <button
+                                onClick={() => setCurrentImageIdx(prev => (prev > 0 ? prev - 1 : landmark.images.length - 1))}
+                                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white/40 transition-all opacity-0 group-hover:opacity-100 z-10"
+                              >
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m15 18-6-6 6-6" /></svg>
+                              </button>
+                              <button
+                                onClick={() => setCurrentImageIdx(prev => (prev < landmark.images.length - 1 ? prev + 1 : 0))}
+                                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-white/40 transition-all opacity-0 group-hover:opacity-100 z-10"
+                              >
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m9 18 6-6-6-6" /></svg>
+                              </button>
+                              <div className="absolute bottom-4 right-6 flex gap-1">
+                                {landmark.images.map((_, i) => (
+                                  <div key={i} className={`w-1.5 h-1.5 rounded-full transition-all ${i === currentImageIdx ? "bg-white w-4" : "bg-white/40"}`} />
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="p-8 flex flex-col gap-8">
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center gap-2">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                            <p className="text-[12px] font-black uppercase tracking-widest text-blue-500">Dato Cultural</p>
+                          </div>
+                          <div className="bg-blue-50 rounded-2xl p-5 border border-blue-100">
+                            <p className="text-[16px] text-zinc-800 font-bold leading-relaxed">
+                              {landmark.history.split('.')[0]}. {landmark.history.split('.')[1] ? landmark.history.split('.')[1] + '.' : ''}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" /><path d="M8 7h6" /><path d="M8 11h8" /></svg>
+                            <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">Contexto Histórico</p>
+                          </div>
+                          <p className="text-[14px] text-zinc-500 leading-relaxed font-medium">
+                            {landmark.history}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col gap-3">
+                          <button
+                            onClick={async () => {
+                              if (!coords || !mapInstance.current) return;
+                              setExpandedLandmark(null);
+                              const directionsService = new google.maps.DirectionsService();
+                              directionsService.route(
+                                {
+                                  origin: { lat: coords.lat, lng: coords.lng },
+                                  destination: { lat: landmark.lat, lng: landmark.lng },
+                                  travelMode: google.maps.TravelMode.WALKING,
+                                },
+                                (result, status) => {
+                                  if (status === "OK" && routePolylineRef.current && result) {
+                                    routePolylineRef.current.setPath(result.routes[0].overview_path);
+                                    routePolylineRef.current.setVisible(true);
+                                    const bounds = result.routes[0].bounds;
+                                    mapInstance.current?.fitBounds(bounds);
+                                  } else {
+                                    const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
+                                    window.open(url, '_blank');
+                                  }
+                                }
+                              );
+                            }}
+                            className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-blue-600 text-white font-bold text-[15px] shadow-lg shadow-blue-500/25 active:scale-[0.98] transition-transform"
+                          >
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                            Cómo llegar caminando
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </motion.div>
           </motion.div>
         )}

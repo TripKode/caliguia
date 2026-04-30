@@ -216,7 +216,7 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
               )}
             </button>
 
-            {/* Chat toggle button — Now visible on all devices */}
+            {/* Chat toggle button — All devices */}
             <button
               onClick={() => setShowInput(s => !s)}
               className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors border ${showInput ? "bg-blue-500/10 border-blue-500/20" : "bg-black/4 border-black/6 hover:bg-black/6"
@@ -228,10 +228,50 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
               </svg>
             </button>
 
+            {/* Desktop-only Direct Action Buttons */}
+            <div className="hidden md:flex items-center gap-1.5">
+              <div className="w-px h-4 bg-black/5 mx-0.5" />
+
+              {/* AR Button */}
+              <button
+                onClick={toggleExperienceMode}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors border ${experienceMode === "ar" ? "bg-blue-500 text-white border-blue-600 shadow-sm" : "bg-black/4 border-black/6 hover:bg-black/6 text-zinc-500"
+                  }`}
+                title="Realidad Aumentada"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 12h5" /><path d="M15 12v5" /><path d="M15 12l5 5" /><circle cx="7" cy="12" r="3" /><path d="M7 9V5" /><path d="M7 19v-4" />
+                </svg>
+              </button>
+
+              {/* Language Selector */}
+              <select
+                value={language}
+                onChange={e => setLanguage(e.target.value as LanguageCode)}
+                className="h-8 rounded-xl border border-black/6 bg-black/4 px-1.5 text-[10px] font-bold text-zinc-600 outline-none hover:bg-black/6 cursor-pointer appearance-none uppercase tracking-wider text-center min-w-[36px]"
+              >
+                <option value="es">ES</option>
+                <option value="en">EN</option>
+                <option value="pt">PT</option>
+              </select>
+
+              {/* Login/Profile Button */}
+              <button
+                title="Ingresar / Regístrate"
+                className="w-8 h-8 rounded-full bg-linear-to-tr from-blue-500 to-blue-400 flex items-center justify-center shadow-sm border border-white/20 hover:shadow-md transition-all active:scale-95"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Mobile-only Menu Toggle */}
             <button
               type="button"
               onClick={() => setShowMenu(open => !open)}
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-black/6 bg-black/4 transition-colors hover:bg-black/6"
+              className="flex h-8 w-8 md:hidden items-center justify-center rounded-xl border border-black/6 bg-black/4 transition-colors hover:bg-black/6"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={showMenu ? "#3b82f6" : "#6b7280"} strokeWidth="2.2" strokeLinecap="round">
                 <line x1="4" y1="7" x2="20" y2="7" />
@@ -240,6 +280,7 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
               </svg>
             </button>
 
+            {/* Mobile-only Dropdown */}
             <AnimatePresence>
               {showMenu && (
                 <motion.div
@@ -247,7 +288,7 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.98 }}
                   transition={{ duration: 0.16, ease: "easeOut" }}
-                  className="absolute right-0 top-[calc(100%+12px)] z-50 w-56 rounded-2xl border border-black/[0.07] bg-white/95 p-3 shadow-xl shadow-zinc-900/10 backdrop-blur-xl"
+                  className="md:hidden absolute right-0 top-[calc(100%+12px)] z-50 w-56 rounded-2xl border border-black/[0.07] bg-white/95 p-3 shadow-xl shadow-zinc-900/10 backdrop-blur-xl"
                 >
                   <div className="flex items-center justify-between mb-4 px-1">
                     <div className="flex items-center gap-2">
