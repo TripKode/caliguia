@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { LANGUAGES, type LanguageCode, useExperience } from "../providers/ExperienceProvider";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Message {
@@ -16,9 +18,9 @@ interface AIFloatingIslandProps {
 
 // ─── Voice bar heights — animates while "speaking" ─────────────────────────
 const BAR_COUNT = 5;
-
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
+  const { experienceMode, language, setExperienceMode, setLanguage, toggleExperienceMode } = useExperience();
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [showInput, setShowInput] = useState(false);
@@ -26,9 +28,11 @@ export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [barHeights, setBarHeights] = useState<number[]>(Array(BAR_COUNT).fill(4));
+  const [showMenu, setShowMenu] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const animFrameRef = useRef<number | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // ── Bar animation ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -57,6 +61,21 @@ export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
     if (showInput) setTimeout(() => inputRef.current?.focus(), 80);
   }, [showInput]);
 
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, []);
+
   // ── Send message ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {
     const text = inputValue.trim();
@@ -70,7 +89,7 @@ export function AIFloatingIsland({ context }: AIFloatingIslandProps) {
     setIsSpeaking(false);
 
     const systemPrompt = `Eres un asistente de navegación urbana para la ciudad de Cali, Colombia. 
-Eres conciso, amigable y útil. Respondes en español. 
+Eres conciso, amigable y útil. ${LANGUAGES[language].instruction} 
 Máximo 2 oraciones por respuesta a menos que el usuario pida más detalle.
 ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
 
@@ -106,7 +125,7 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
     } finally {
       setIsLoading(false);
     }
-  }, [inputValue, messages, isLoading, context]);
+  }, [inputValue, messages, isLoading, context, language]);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") sendMessage();
@@ -181,24 +200,69 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
             ))}
           </div>
 
-          {/* Status label */}
-          <div className="flex flex-col items-end shrink-0">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
-              {isLoading ? "Pensando" : isMuted ? "Silenciado" : isSpeaking ? "Hablando" : "Listo"}
-            </span>
-            <div className="flex items-center gap-1 mt-0.5">
-              <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{
-                  background: isLoading ? "#f59e0b" : isSpeaking && !isMuted ? "#22c55e" : "#d1d5db",
-                  animation: (isSpeaking && !isMuted) || isLoading ? "pulse 1.5s infinite" : "none",
-                }}
-              />
+          <div ref={menuRef} className="relative flex items-center gap-1.5 shrink-0">
+            {/* Status label */}
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
+                {isLoading ? "Pensando" : isMuted ? "Silenciado" : isSpeaking ? "Hablando" : "Listo"}
+              </span>
+              <div className="flex items-center gap-1 mt-0.5">
+                <div
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    background: isLoading ? "#f59e0b" : isSpeaking && !isMuted ? "#22c55e" : "#d1d5db",
+                    animation: (isSpeaking && !isMuted) || isLoading ? "pulse 1.5s infinite" : "none",
+                  }}
+                />
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowMenu(open => !open)}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-black/[0.06] bg-black/[0.04] transition-colors hover:bg-black/[0.06] md:hidden"
+              title="Opciones"
+              aria-label="Abrir opciones"
+              aria-expanded={showMenu}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={showMenu ? "#3b82f6" : "#6b7280"} strokeWidth="2.2" strokeLinecap="round">
+                <line x1="4" y1="7" x2="20" y2="7" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="17" x2="20" y2="17" />
+              </svg>
+            </button>
+
+            <AnimatePresence>
+              {showMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  className="absolute right-0 top-[calc(100%+12px)] z-50 w-56 rounded-2xl border border-black/[0.07] bg-white/95 p-3 shadow-xl shadow-zinc-900/10 backdrop-blur-xl md:hidden"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="island-language" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
+                      Idioma
+                    </label>
+                    <select
+                      id="island-language"
+                      value={language}
+                      onChange={event => setLanguage(event.target.value as LanguageCode)}
+                      className="h-8 rounded-xl border border-black/[0.07] bg-zinc-50 px-2 text-[12px] font-semibold text-zinc-700 outline-none"
+                    >
+                      <option value="es">Español</option>
+                      <option value="en">Inglés</option>
+                      <option value="pt">Portugués</option>
+                    </select>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Controls */}
-          <div className="flex items-center gap-1.5 shrink-0 ml-1">
+          <div className="hidden md:flex items-center gap-1.5 shrink-0 ml-1">
             {/* Mute */}
             <button
               onClick={() => setIsMuted(m => !m)}
