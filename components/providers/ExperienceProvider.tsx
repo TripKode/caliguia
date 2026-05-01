@@ -55,9 +55,6 @@ export const TOURISM_INTERESTS: Record<InterestId, { label: string; profile: str
 type ExperienceContextValue = {
   language: LanguageCode;
   setLanguage: (language: LanguageCode) => void;
-  experienceMode: ExperienceMode;
-  setExperienceMode: (mode: ExperienceMode) => void;
-  toggleExperienceMode: () => void;
   selectedInterests: InterestId[];
   toggleInterest: (interest: InterestId) => void;
   travelGroup: TravelGroup;
@@ -70,7 +67,6 @@ const ExperienceContext = createContext<ExperienceContextValue | null>(null);
 
 export function ExperienceProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<LanguageCode>("es");
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>("map");
   const [selectedInterests, setSelectedInterests] = useState<InterestId[]>(["salsa", "patrimonio"]);
   const [travelGroup, setTravelGroup] = useState<TravelGroup>("pareja");
   const [pace, setPace] = useState<Pace>("tranquilo");
@@ -79,9 +75,6 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
     () => ({
       language,
       setLanguage,
-      experienceMode,
-      setExperienceMode,
-      toggleExperienceMode: () => setExperienceMode(mode => (mode === "ar" ? "map" : "ar")),
       selectedInterests,
       toggleInterest: (interest) =>
         setSelectedInterests(current =>
@@ -94,7 +87,7 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
       pace,
       setPace,
     }),
-    [experienceMode, language, pace, selectedInterests, travelGroup]
+    [language, pace, selectedInterests, travelGroup]
   );
 
   return <ExperienceContext.Provider value={value}>{children}</ExperienceContext.Provider>;

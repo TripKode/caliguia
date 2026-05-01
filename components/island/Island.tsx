@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { LANGUAGES, type LanguageCode, useExperience } from "../providers/ExperienceProvider";
+import { useMap } from "@/hooks/UseMap";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Message {
@@ -24,7 +25,10 @@ interface AIFloatingIslandProps {
 const BAR_COUNT = 5;
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute }: AIFloatingIslandProps) {
-  const { experienceMode, language, setLanguage, toggleExperienceMode } = useExperience();
+  const { language, setLanguage } = useExperience();
+  const { experienceMode, setExperienceMode } = useMap();
+
+  const toggleExperienceMode = () => setExperienceMode(experienceMode === "ar" ? "map" : "ar");
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [showInput, setShowInput] = useState(false);
   const [inputValue, setInputValue] = useState("");
