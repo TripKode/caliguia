@@ -19,7 +19,10 @@ import {
     Video,
     Search,
     History,
-    ShieldAlert
+    ShieldAlert,
+    Plus,
+    Minus,
+    Bed
 } from "lucide-react";
 import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
@@ -32,6 +35,11 @@ import { type RiskLevel } from "@/components/map/types";
 
 export function Panel() {
     const [currentPage, setCurrentPage] = useState(1);
+    const [isPlacesExpanded, setIsPlacesExpanded] = useState(true);
+    const [isHotelsExpanded, setIsHotelsExpanded] = useState(true);
+    const [hotels, setHotels] = useState<any[]>([]);
+    const [loadingHotels, setLoadingHotels] = useState(false);
+    const [hotelsPage, setHotelsPage] = useState(1);
     const {
         activeTab,
         setActiveTab,
@@ -60,6 +68,21 @@ export function Panel() {
     useEffect(() => {
         setCurrentPage(1);
     }, [places]);
+
+    useEffect(() => {
+        if (activeTab === "places" && hotels.length === 0 && !loadingHotels) {
+            setLoadingHotels(true);
+            fetch(`/api/hotels?city=${currentComuna?.name || "Cali"}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (Array.isArray(data)) {
+                        setHotels(data.filter(h => h.hotelId));
+                    }
+                })
+                .catch(console.error)
+                .finally(() => setLoadingHotels(false));
+        }
+    }, [activeTab, currentComuna]);
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
@@ -224,15 +247,25 @@ export function Panel() {
                                 </p>
                             </div>
                             {coords && (
-                                <div className="text-right">
-                                    <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
-                                    <p className="text-[13px] font-semibold text-blue-500">1 km</p>
+                                <div className="flex items-center gap-3">
+                                    <div className="text-right">
+                                        <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
+                                        <p className="text-[13px] font-semibold text-blue-500">1 km</p>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIsPlacesExpanded(!isPlacesExpanded)}
+                                        className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-lg transition-colors active:scale-95 shrink-0"
+                                    >
+                                        {isPlacesExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                                    </button>
                                 </div>
                             )}
                         </div>
 
-                        {loadingPlaces && places.length === 0 && (
-                            <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
+                        {isPlacesExpanded && (
+                            <>
+                                {loadingPlaces && places.length === 0 && (
+                                    <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
                                 {[1, 2, 3].map(i => (
                                     <motion.div
                                         key={i}
@@ -325,6 +358,90 @@ export function Panel() {
                                             disabled={currentPage === Math.ceil(places.length / 20)}
                                             className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
                                         >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                            </>
+                        )}
+
+                        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
+                            <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Hoteles</p>
+                                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
+                                    {loadingHotels ? "Buscando..." : `${hotels.length} hoteles`}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={() => setIsHotelsExpanded(!isHotelsExpanded)}
+                                    className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-lg transition-colors active:scale-95 shrink-0"
+                                >
+                                    {isHotelsExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {isHotelsExpanded && (
+                            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
+                                {loadingHotels && hotels.length === 0 && (
+                                    <div className="flex flex-col gap-3 px-1 py-2">
+                                        {[1, 2, 3].map(i => (
+                                            <div key={`h-sk-${i}`} className="flex gap-3 items-center animate-pulse">
+                                                <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
+                                                <div className="flex flex-col gap-1.5 flex-1">
+                                                    <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
+                                                    <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {!loadingHotels && hotels.length === 0 && (
+                                    <div className="text-[12px] text-zinc-400 text-center py-8">
+                                        No se encontraron hoteles en la zona.
+                                    </div>
+                                )}
+
+                                {hotels.length > 0 && (
+                                    <div className="flex flex-col gap-2">
+                                        {hotels.slice((hotelsPage - 1) * 10, hotelsPage * 10).map((hotel, idx) => (
+                                            <div key={`hotel-${hotel.hotelId}-${idx}`} className="flex items-start gap-3 p-3 rounded-xl bg-white border border-zinc-100 shadow-sm transition-colors hover:bg-zinc-50 cursor-pointer">
+                                                <div className="w-9 h-9 rounded-xl bg-purple-500/[0.07] border border-purple-500/10 flex items-center justify-center text-base shrink-0">
+                                                    <Bed className="w-4 h-4 text-purple-600" />
+                                                </div>
+                                                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                                    <p className="text-[13px] font-bold text-zinc-800 truncate">{hotel.name}</p>
+                                                    <p className="text-[11px] text-zinc-500 truncate">{hotel.vendor1}</p>
+                                                    {hotel.reviews && (
+                                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                                            <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                                                            <span className="text-[10px] font-medium text-amber-600">{hotel.reviews.rating}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="shrink-0 text-right">
+                                                    <p className="text-[13px] font-bold text-zinc-800">{hotel.price1}</p>
+                                                    <p className="text-[9px] font-medium uppercase tracking-tighter text-zinc-400">Por noche</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {hotels.length > 10 && (
+                                    <div className="flex items-center justify-between px-2 py-4 mt-2 border-t border-black/5 bg-white/50 sticky bottom-0">
+                                        <button onClick={() => setHotelsPage(p => Math.max(1, p - 1))} disabled={hotelsPage === 1} className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all">
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </button>
+                                        <div className="text-center">
+                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">Página</p>
+                                            <p className="text-[13px] font-black text-purple-600 leading-none mt-0.5">{hotelsPage} / {Math.ceil(hotels.length / 10)}</p>
+                                        </div>
+                                        <button onClick={() => setHotelsPage(p => Math.min(Math.ceil(hotels.length / 10), p + 1))} disabled={hotelsPage === Math.ceil(hotels.length / 10)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all">
                                             <ChevronRight className="w-4 h-4" />
                                         </button>
                                     </div>

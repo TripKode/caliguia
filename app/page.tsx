@@ -2,6 +2,7 @@
 
 import { MapProvider } from "../hooks/UseMap";
 import MapContent from "@/components/map/MapContent";
+import PWAManager from "@/components/PWAManager";
 
 declare global {
   interface Window {
@@ -15,6 +16,7 @@ export default function Home() {
   return (
     <MapProvider>
       <MapContent />
+      <PWAManager />
     </MapProvider>
   );
 }
