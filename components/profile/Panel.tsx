@@ -1,6 +1,26 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { 
+    Landmark as LandmarkIcon, 
+    Mic, 
+    Flower, 
+    AlertTriangle, 
+    MapPin, 
+    Star, 
+    ChevronRight, 
+    ChevronLeft,
+    Clock,
+    User,
+    Calendar,
+    Music,
+    Utensils,
+    Video,
+    Search,
+    History,
+    ShieldAlert
+} from "lucide-react";
 import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
     CALI_EVENTS_TODAY,
@@ -11,6 +31,7 @@ import { haversineDistance, getComunaCentroid } from "@/components/map/handlers"
 import { type RiskLevel } from "@/components/map/types";
 
 export function Panel() {
+    const [currentPage, setCurrentPage] = useState(1);
     const {
         activeTab,
         setActiveTab,
@@ -32,8 +53,13 @@ export function Panel() {
         showZoneAlert,
         setShowZoneAlert,
         comunas: CALI_COMUNAS,
-        setCurrentComuna
+        setCurrentComuna,
+        selectComuna
     } = useMap();
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [places]);
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
@@ -76,16 +102,16 @@ export function Panel() {
                         exit={{ opacity: 0, y: -6 }}
                         transition={{ duration: 0.18, ease: "easeOut" }}
                     >
-                        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0 bg-amber-50/30">
+                        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-black uppercase tracking-[0.15em] text-amber-600">Patrimonio</p>
-                                <p className="text-[14px] font-black text-zinc-800 mt-0.5">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Patrimonio</p>
+                                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
                                     {currentComuna ? currentComuna.name : "Explorando Cali"}
                                 </p>
                             </div>
                             <div className="text-right">
-                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Escaneo</p>
-                                <p className="text-[13px] font-black text-blue-500">1 km</p>
+                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
+                                <p className="text-[13px] font-semibold text-blue-500">1 km</p>
                             </div>
                         </div>
 
@@ -165,6 +191,18 @@ export function Panel() {
                                         </div>
                                     </motion.div>
                                 ))}
+
+                                {!loadingLandmarks && localLandmarks.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                                        <div className="w-12 h-12 rounded-2xl bg-zinc-50 flex items-center justify-center mb-4 border border-black/5">
+                                            <LandmarkIcon className="w-6 h-6 text-zinc-400" />
+                                        </div>
+                                        <p className="text-[14px] font-black text-zinc-800">Nada que ver por aquí</p>
+                                        <p className="text-[11px] text-zinc-400 mt-1 max-w-[180px] leading-relaxed">
+                                            No hemos encontrado monumentos históricos en tu ubicación actual.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </motion.div>
@@ -221,7 +259,7 @@ export function Panel() {
                                     </div>
                                 )}
                                 <motion.div className="flex flex-col gap-1" layout>
-                                    {places.map((place) => {
+                                    {places.slice((currentPage - 1) * 20, currentPage * 20).map((place) => {
                                         const dist = coords
                                             ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
                                             : null;
@@ -245,11 +283,14 @@ export function Panel() {
                                                         <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
                                                             {getCategoryLabel(place.types)}
                                                         </span>
-                                                        {place.rating && (
-                                                            <span className="text-[10px] font-medium text-amber-600">
-                                                                ★ {place.rating.toFixed(1)}
-                                                                {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
-                                                            </span>
+                                                        {place.rating != null && (
+                                                            <>
+                                                                <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                                                                <span className="text-[10px] font-medium text-amber-600">
+                                                                    {place.rating.toFixed(1)}
+                                                                    {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
+                                                                </span>
+                                                            </>
                                                         )}
                                                         {place.business_status && place.business_status !== "OPERATIONAL" && (
                                                             <span className="text-[10px] font-medium text-red-400">Cerrado</span>
@@ -265,6 +306,29 @@ export function Panel() {
                                         );
                                     })}
                                 </motion.div>
+
+                                {places.length > 20 && (
+                                    <div className="flex items-center justify-between px-2 py-4 mt-2 border-t border-black/5 bg-white/50 sticky bottom-0">
+                                        <button
+                                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                            disabled={currentPage === 1}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                        >
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </button>
+                                        <div className="text-center">
+                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">Página</p>
+                                            <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(places.length / 20)}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setCurrentPage(p => Math.min(Math.ceil(places.length / 20), p + 1))}
+                                            disabled={currentPage === Math.ceil(places.length / 20)}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </motion.div>
@@ -282,14 +346,14 @@ export function Panel() {
                         {/* Header */}
                         <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-500">Agenda Cali</p>
-                                <p className="text-[14px] font-black text-zinc-800 mt-0.5">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Agenda Cali</p>
+                                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
                                     {CALI_EVENTS_TODAY.length} eventos para hoy
                                 </p>
                             </div>
                             <div className="text-right">
                                 <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Fecha</p>
-                                <p className="text-[12px] font-black text-zinc-800">
+                                <p className="text-[12px] font-semibold text-zinc-800 mt-0.5">
                                     Abril 30, 2026
                                 </p>
                             </div>
@@ -316,7 +380,13 @@ export function Panel() {
                                         }}
                                     >
                                         <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-base">{currentNarration.icon ?? "🎙️"}</span>
+                                            {currentNarration.type === "danger" ? (
+                                                <ShieldAlert className="w-4 h-4 text-red-600" />
+                                            ) : currentNarration.type === "welcome" ? (
+                                                <Flower className="w-4 h-4 text-blue-600" />
+                                            ) : (
+                                                <Mic className="w-4 h-4 text-blue-600" />
+                                            )}
                                             <p className="text-[11px] font-bold uppercase tracking-[0.07em]"
                                                 style={{ color: currentNarration.type === "danger" ? "#dc2626" : "#2563eb" }}>
                                                 {narratorSpeaking ? "Hablando ahora" : "Último mensaje"}
@@ -353,11 +423,17 @@ export function Panel() {
                                             className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
                                         >
                                             <div className="flex items-start gap-3">
-                                                {event.icon && (
-                                                    <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center text-xl shrink-0 group-hover:scale-110 transition-transform">
-                                                        {event.icon}
+                                                    <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                                                        {event.category.includes("Salsa") || event.category.includes("Música") ? (
+                                                            <Music className="w-5 h-5 text-blue-500" />
+                                                        ) : event.category.includes("Gastronomía") ? (
+                                                            <Utensils className="w-5 h-5 text-blue-500" />
+                                                        ) : event.category.includes("Cine") ? (
+                                                            <Video className="w-5 h-5 text-blue-500" />
+                                                        ) : (
+                                                            <Calendar className="w-5 h-5 text-blue-500" />
+                                                        )}
                                                     </div>
-                                                )}
                                                 <div className="flex flex-col gap-1 min-w-0 flex-1">
                                                     <div className="flex items-center justify-between">
                                                         <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase tracking-tighter">
@@ -395,12 +471,16 @@ export function Panel() {
                                                 : "bg-zinc-50 border-zinc-100"
                                                 }`}
                                         >
-                                            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0"
+                                            <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
                                                 style={{
                                                     background: item.type === "danger" ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.07)",
                                                     border: item.type === "danger" ? "1px solid rgba(239,68,68,0.15)" : "1px solid rgba(59,130,246,0.1)",
                                                 }}>
-                                                {item.icon ?? "📍"}
+                                                {item.type === "danger" ? (
+                                                    <AlertTriangle className="w-4 h-4 text-red-500" />
+                                                ) : (
+                                                    <History className="w-4 h-4 text-blue-500" />
+                                                )}
                                             </div>
                                             <div className="flex flex-col gap-0.5 flex-1 min-w-0">
                                                 <p className="text-[12px] font-semibold text-zinc-800 truncate">{item.title ?? item.type}</p>
@@ -423,48 +503,6 @@ export function Panel() {
                         exit={{ opacity: 0, y: -6 }}
                         transition={{ duration: 0.18, ease: "easeOut" }}
                     >
-                        {/* Current zone banner */}
-                        <AnimatePresence initial={false}>
-                            {currentComuna && showZoneAlert && (
-                                <motion.div
-                                    className="mx-4 mt-3 shrink-0"
-                                    initial={{ opacity: 0, y: -8 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, scale: 0.95 }}
-                                    transition={{ duration: 0.18 }}
-                                >
-                                    <div
-                                        className="relative rounded-xl px-4 py-3 border overflow-hidden"
-                                        style={{
-                                            background: `${RISK_CONFIG[currentComuna.risk].fill}18`,
-                                            borderColor: `${RISK_CONFIG[currentComuna.risk].stroke}30`,
-                                        }}
-                                    >
-                                        <button
-                                            onClick={() => setShowZoneAlert(false)}
-                                            className="absolute top-2 right-2 p-1 rounded-full hover:bg-black/5 text-zinc-400"
-                                        >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                        </button>
-
-                                        <div className="flex flex-col gap-1 pr-6">
-                                            <p className="text-[10px] font-bold uppercase tracking-[0.07em] text-zinc-400">Tu zona actual</p>
-                                            <div className="flex items-baseline justify-between gap-2">
-                                                <p className="text-[15px] font-black text-zinc-800 leading-tight">{currentComuna.name}</p>
-                                                <span
-                                                    className="text-[9px] font-black px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap"
-                                                    style={{ background: `${RISK_CONFIG[currentComuna.risk].fill}25`, color: RISK_CONFIG[currentComuna.risk].color }}
-                                                >
-                                                    RIESGO {RISK_CONFIG[currentComuna.risk].label.toUpperCase()}
-                                                </span>
-                                            </div>
-                                            <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed line-clamp-2">{currentComuna.description}</p>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-
                         {/* Legend - Compact Row */}
                         <div className="px-4 pt-4 pb-1 shrink-0">
                             <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar pb-2">
@@ -490,14 +528,7 @@ export function Panel() {
                                         whileTap={{ scale: 0.995 }}
                                         className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${currentComuna?.id === c.id ? "bg-blue-500/[0.07]" : "hover:bg-zinc-50"
                                             }`}
-                                        onClick={() => {
-                                            if (mapInstance.current) {
-                                                const centroid = getComunaCentroid(c);
-                                                mapInstance.current.panTo(centroid);
-                                                mapInstance.current.setZoom(15);
-                                                setCurrentComuna(c);
-                                            }
-                                        }}
+                                        onClick={() => selectComuna(c)}
                                     >
                                         <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: RISK_CONFIG[c.risk].color }} />
                                         <div className="flex flex-col flex-1 min-w-0">

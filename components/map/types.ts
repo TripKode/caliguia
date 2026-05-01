@@ -102,6 +102,10 @@ export interface MapContextType {
     speechUnlocked: boolean;
     voicePreference: string;
     aiContext: string;
+    selectComuna: (comuna: ComunaData) => void;
+    selectedVoiceId: string;
+    availableVoices: any[];
+    setVoice: (id: string) => void;
 }
 
 export interface CaliEvent {

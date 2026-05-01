@@ -21,16 +21,24 @@ interface AIFloatingIslandProps {
   onToggleMute?: () => void;
 }
 
-// ─── Voice bar heights — animates while "speaking" ─────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────
 const BAR_COUNT = 5;
+
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute }: AIFloatingIslandProps) {
   const { language, setLanguage } = useExperience();
-  const { experienceMode, setExperienceMode } = useMap();
+  const { 
+    experienceMode, 
+    setExperienceMode, 
+    selectedVoiceId, 
+    availableVoices, 
+    setVoice 
+  } = useMap();
 
   const toggleExperienceMode = () => setExperienceMode(experienceMode === "ar" ? "map" : "ar");
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [showInput, setShowInput] = useState(false);
+  const [showVoiceDropdown, setShowVoiceDropdown] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +53,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const inputRef = useRef<HTMLInputElement>(null);
   const animFrameRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const voiceBtnRef = useRef<HTMLDivElement>(null);
 
   // ── Bar animation ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -77,6 +86,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     const onPointerDown = (event: MouseEvent | TouchEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) {
         setShowMenu(false);
+      }
+      if (!voiceBtnRef.current?.contains(event.target as Node)) {
+        setShowVoiceDropdown(false);
       }
     };
 
@@ -159,26 +171,69 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
         }}
       >
         <div className="flex items-center gap-3">
-          <div
-            className="shrink-0 flex items-center justify-center rounded-[14px] transition-all duration-300"
-            style={{
-              width: 40, height: 40,
-              background: isSpeaking && !isMuted
-                ? "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)"
-                : "rgba(241,245,249,1)",
-              border: `1.5px solid ${isSpeaking && !isMuted ? "rgba(59,130,246,0.25)" : "rgba(0,0,0,0.06)"}`,
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <line x1="12" y1="2" x2="12" y2="5" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.8" strokeLinecap="round" />
-              <circle cx="12" cy="2" r="1.2" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
-              <rect x="4" y="5" width="16" height="12" rx="3.5" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} fillOpacity="0.12" />
-              <rect x="4" y="5" width="16" height="12" rx="3.5" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.6" />
-              <circle cx="9" cy="11" r="1.8" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
-              <circle cx="15" cy="11" r="1.8" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
-              <path d="M9 14.5 Q12 16 15 14.5" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.4" strokeLinecap="round" fill="none" />
-              <rect x="9" y="17" width="6" height="2" rx="1" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} fillOpacity="0.4" />
-            </svg>
+          <img 
+            src="https://res.cloudinary.com/dqluumk10/image/upload/v1768316985/TripCode/Logos/luc79qy6rewoqovhxwrz.png" 
+            alt="Escudo de Santiago de Cali" 
+            className="w-7 h-7 object-contain shrink-0 opacity-90 drop-shadow-sm"
+          />
+          <div ref={voiceBtnRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setShowVoiceDropdown(!showVoiceDropdown)}
+              className="shrink-0 flex items-center justify-center rounded-[14px] transition-all duration-300 active:scale-95"
+              style={{
+                width: 40, height: 40,
+                background: isSpeaking && !isMuted
+                  ? "linear-gradient(135deg, #f8fafc 0%, #f0f9ff 100%)"
+                  : "rgba(248,250,252,1)",
+                border: `1.5px solid ${isSpeaking && !isMuted ? "rgba(59,130,246,0.15)" : "rgba(0,0,0,0.04)"}`,
+              }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ transform: "translateY(1px)" }}>
+                <line x1="12" y1="3" x2="12" y2="6" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.8" strokeLinecap="round" />
+                <circle cx="12" cy="3" r="1.2" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
+                <rect x="4" y="6" width="16" height="12" rx="3.5" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} fillOpacity="0.1" />
+                <rect x="4" y="6" width="16" height="12" rx="3.5" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.6" />
+                <circle cx="9" cy="12" r="1.8" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
+                <circle cx="15" cy="12" r="1.8" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} />
+                <path d="M9 15.5 Q12 17 15 15.5" stroke={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} strokeWidth="1.4" strokeLinecap="round" fill="none" />
+                <rect x="9" y="18" width="6" height="2" rx="1" fill={isSpeaking && !isMuted ? "#3b82f6" : "#94a3b8"} fillOpacity="0.4" />
+              </svg>
+            </button>
+
+            <AnimatePresence>
+              {showVoiceDropdown && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, y: 8 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: 8 }}
+                  className="absolute left-0 top-[calc(100%+8px)] z-50 w-48 bg-white/95 backdrop-blur-xl border border-black/5 rounded-2xl p-1.5 shadow-2xl pointer-events-auto"
+                >
+                  <p className="px-2.5 py-1.5 text-[9px] font-black uppercase tracking-widest text-zinc-400">Seleccionar Voz</p>
+                  <div className="flex flex-col gap-0.5">
+                    {availableVoices.map((v) => (
+                      <button
+                        key={v.id}
+                        onClick={() => {
+                          setVoice(v.id);
+                          setShowVoiceDropdown(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left transition-colors ${selectedVoiceId === v.id ? "bg-blue-500 text-white" : "hover:bg-black/4 text-zinc-700"
+                          }`}
+                      >
+                        <div className="flex flex-col">
+                          <span className={`text-[12px] font-bold ${selectedVoiceId === v.id ? "text-white" : "text-zinc-800"}`}>{v.name}</span>
+                          <span className={`text-[10px] ${selectedVoiceId === v.id ? "text-white/80" : "text-zinc-500"}`}>{v.gender === "male" ? "Hombre" : "Mujer"}</span>
+                        </div>
+                        {selectedVoiceId === v.id && (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="flex items-center gap-[3px] flex-1" style={{ height: 28 }}>

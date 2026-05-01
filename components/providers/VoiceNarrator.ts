@@ -34,12 +34,27 @@ function pickSpanishVoice(): SpeechSynthesisVoice | null {
   return null;
 }
 
+export interface CaliVoice {
+  id: string;
+  name: string;
+  gender: "male" | "female";
+  label: string;
+}
+
+const CALI_VOICES: CaliVoice[] = [
+  { id: "male-1", name: "Juan", gender: "male", label: "Juan (Hombre Caleño)" },
+  { id: "female-1", name: "Lina", gender: "female", label: "Lina (Mujer Caleña)" },
+  { id: "male-2", name: "Andrés", gender: "male", label: "Andrés (Parce Caleño)" },
+  { id: "female-2", name: "Sofi", gender: "female", label: "Sofi (Caleñita)" },
+];
+
 export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentNarration, setCurrentNarration] = useState<NarrationEvent | null>(null);
   const [experienceLog, setExperienceLog] = useState<NarrationEvent[]>([]);
   const [speechUnlocked, setSpeechUnlocked] = useState(false);
   const [voicePreference, setVoicePreference] = useState<"granted" | "denied" | "unknown">("unknown");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>("male-1");
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const queueRef = useRef<NarrationEvent[]>([]);
@@ -50,6 +65,8 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
   useEffect(() => {
     const saved = localStorage.getItem("caliguia_voice_preference") as any;
     if (saved) setVoicePreference(saved);
+    const savedVoice = localStorage.getItem("caliguia_selected_voice");
+    if (savedVoice) setSelectedVoiceId(savedVoice);
   }, []);
 
   const stopSpeaking = useCallback(() => {
@@ -74,12 +91,28 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
 
     const utterance = new SpeechSynthesisUtterance(event.text);
     utterance.lang = "es-CO";
-    utterance.rate = 0.90;
+    utterance.rate = 0.92;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    const voice = pickSpanishVoice();
-    if (voice) utterance.voice = voice;
+    const voices = window.speechSynthesis.getVoices();
+    const selectedCaliVoice = CALI_VOICES.find(v => v.id === selectedVoiceId) || CALI_VOICES[0];
+    
+    // Map our labels to the best system voices
+    const isFemale = selectedCaliVoice.gender === "female";
+    const spanishVoices = voices.filter(v => v.lang.startsWith("es"));
+    
+    let bestMatch = spanishVoices.find(v => v.lang === "es-CO");
+    if (!bestMatch) {
+        // Find by gender keywords in name if possible, or just pick one
+        const genderMatch = spanishVoices.find(v => 
+            isFemale ? (v.name.includes("Female") || v.name.includes("Mujer") || v.name.includes("Helena") || v.name.includes("Laura")) 
+                     : (v.name.includes("Male") || v.name.includes("Hombre") || v.name.includes("Pablo") || v.name.includes("Raul"))
+        );
+        bestMatch = genderMatch || spanishVoices[0];
+    }
+
+    if (bestMatch) utterance.voice = bestMatch;
 
     utterance.onend = () => {
       isPlayingRef.current = false;
@@ -94,7 +127,7 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
 
     utteranceRef.current = utterance;
     window.speechSynthesis.speak(utterance);
-  }, [muted]);
+  }, [muted, selectedVoiceId]);
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
@@ -141,6 +174,12 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
     }
   }, [playNext]);
 
+  const setVoice = useCallback((id: string) => {
+    setSelectedVoiceId(id);
+    localStorage.setItem("caliguia_selected_voice", id);
+    // Restart current speaking if any? Maybe not to avoid interruption
+  }, []);
+
   useEffect(() => {
     if (muted) stopSpeaking();
   }, [muted, stopSpeaking]);
@@ -151,6 +190,9 @@ export function useVoiceNarrator({ muted = false }: UseVoiceNarratorOptions = {}
     experienceLog,
     speechUnlocked,
     voicePreference,
+    selectedVoiceId,
+    availableVoices: CALI_VOICES,
+    setVoice,
     speak,
     stopSpeaking,
     unlockSpeech,

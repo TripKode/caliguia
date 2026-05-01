@@ -42,8 +42,6 @@ import {
     RiskLevel
 } from "@/components/map/types";
 
-
-
 const COMUNA_RISK_MAP: Record<number, { risk: any; description: string }> = {
     1: { risk: "high", description: "Zona occidental, ladera. Precaución en zonas altas." },
     2: { risk: "safe", description: "Zona norte, residencial y gastronómica de alto nivel." },
@@ -69,71 +67,66 @@ const COMUNA_RISK_MAP: Record<number, { risk: any; description: string }> = {
     22: { risk: "safe", description: "Pance y Ciudad Jardín. La zona más exclusiva y segura." },
 };
 
+const fetchWikipediaSummary = async (title: string): Promise<{ extract: string; images: string[] } | null> => {
+    try {
+        const searchUrl = `https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title + " Cali")}&format=json&origin=*`;
+        const searchResp = await fetch(searchUrl);
+        const searchData = await searchResp.json();
+
+        if (!searchData.query?.search?.length) return null;
+
+        const bestTitle = searchData.query.search[0].title;
+        const summaryUrl = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bestTitle)}`;
+        const mediaUrl = `https://es.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(bestTitle)}`;
+
+        const [summaryResp, mediaResp] = await Promise.all([
+            fetch(summaryUrl),
+            fetch(mediaUrl).catch(() => null)
+        ]);
+
+        if (!summaryResp.ok) return null;
+        const summaryData = await summaryResp.json();
+
+        let images: string[] = [];
+        if (summaryData.originalimage?.source) images.push(summaryData.originalimage.source);
+
+        if (mediaResp?.ok) {
+            const mediaData = await mediaResp.json();
+            const extraImages = mediaData.items
+                ?.filter((item: any) => item.type === "image")
+                ?.map((item: any) => item.srcset?.[0]?.src || item.src)
+                ?.filter((src: string) => src && !images.includes(src))
+                ?.slice(0, 5) || [];
+            images = [...images, ...extraImages];
+        }
+
+        return { extract: summaryData.extract, images };
+    } catch {
+        return null;
+    }
+};
+
+const getComunaInfoWindowContent = (comuna: ComunaData) => {
+    const cfg = RISK_CONFIG[comuna.risk];
+    return `
+    <div style="font-family:-apple-system,sans-serif;padding:10px 4px 4px 4px;min-width:200px;margin-top:-10px">
+      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:2px">
+        <div style="font-size:14px;font-weight:900;color:#18181b;line-height:1.1">${comuna.name}</div>
+        <div style="width:28px;height:22px;shrink:0"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${cfg.color}"></span>
+        <span style="font-size:10px;font-weight:800;color:${cfg.color};text-transform:uppercase;letter-spacing:0.04em">Riesgo ${cfg.label}</span>
+      </div>
+      <div style="font-size:11px;color:#4b5563;line-height:1.4;margin-bottom:10px;font-weight:500">${comuna.description}</div>
+      <div style="font-size:10px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:8px">${comuna.barrios.join(", ")}</div>
+    </div>
+  `;
+};
+
 export function UseHome() {
+    // ── 1. STATE ──
     const [comunas, setComunas] = useState<ComunaData[]>([]);
-
-    useEffect(() => {
-        const fetchComunas = async () => {
-            const CACHE_KEY = "caliguia_comunas_data";
-            const cached = localStorage.getItem(CACHE_KEY);
-            if (cached) {
-                try {
-                    setComunas(JSON.parse(cached));
-                    return;
-                } catch (e) {
-                    console.error("Cache error", e);
-                }
-            }
-
-            try {
-                const res = await fetch("/api/comunas");
-                if (!res.ok) return;
-                const data = await res.json();
-
-                const transformed: ComunaData[] = data.features.map((f: any) => {
-                    const id = parseInt(f.properties.comuna);
-                    const riskInfo = COMUNA_RISK_MAP[id] || { risk: "medium", description: "Información en proceso." };
-                    const name = f.properties.nombre ? (f.properties.nombre.includes("Comuna") ? f.properties.nombre : `Comuna ${id} — ${f.properties.nombre}`) : `Comuna ${id}`;
-
-                    let coords: [number, number][] = [];
-                    if (f.geometry.type === "Polygon") {
-                        coords = f.geometry.coordinates[0].map((c: any) => [c[1], c[0]]);
-                    } else if (f.geometry.type === "MultiPolygon") {
-                        coords = f.geometry.coordinates[0][0].map((c: any) => [c[1], c[0]]);
-                    }
-
-                    return { id, name, risk: riskInfo.risk, description: riskInfo.description, barrios: [], coords };
-                });
-
-                setComunas(transformed);
-                localStorage.setItem(CACHE_KEY, JSON.stringify(transformed));
-            } catch (err) {
-                console.error("Fetch Comunas failed:", err);
-            }
-        };
-        fetchComunas();
-    }, []);
-
-    const CALI_COMUNAS = comunas;
-    const webcamRef = useRef<Webcam>(null);
-    const mapRef = useRef<HTMLDivElement>(null);
-    const mapInstance = useRef<google.maps.Map | null>(null);
-    const markerRef = useRef<{ setPosition: (pos: google.maps.LatLngLiteral) => void } | null>(null);
-    const circleRef = useRef<google.maps.Circle | null>(null);
-    const badgeRef = useRef<any>(null);
-    const watchIdRef = useRef<number | null>(null);
-    const requestingLocationRef = useRef(false);
-    const lastFetchPos = useRef<{ lat: number; lng: number } | null>(null);
-    const polygonsRef = useRef<google.maps.Polygon[]>([]);
-    const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
-    const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
-    const routePolylineRef = useRef<google.maps.Polyline | null>(null);
-
-    const dragStartY = useRef<number>(0);
-    const drawerStartH = useRef<number>(0);
-    const isDragging = useRef(false);
-    const drawerCurrentH = useRef(280);
-
     const [status, setStatus] = useState<Status>("idle");
     const [locationError, setLocationError] = useState<string | null>(null);
     const [locationDebug, setLocationDebug] = useState<string | null>(null);
@@ -157,84 +150,65 @@ export function UseHome() {
     const [voiceMuted, setVoiceMuted] = useState(false);
     const [showZoneAlert, setShowZoneAlert] = useState(true);
     const [experienceMode, setExperienceMode] = useState<"map" | "ar">("map");
+
+    // ── 2. REFS ──
+    const webcamRef = useRef<Webcam>(null);
+    const mapRef = useRef<HTMLDivElement>(null);
+    const mapInstance = useRef<google.maps.Map | null>(null);
+    const markerRef = useRef<{ setPosition: (pos: google.maps.LatLngLiteral) => void } | null>(null);
+    const circleRef = useRef<google.maps.Circle | null>(null);
+    const badgeRef = useRef<any>(null);
+    const watchIdRef = useRef<number | null>(null);
+    const requestingLocationRef = useRef(false);
+    const lastFetchPos = useRef<{ lat: number; lng: number } | null>(null);
+    const polygonsRef = useRef<google.maps.Polygon[]>([]);
+    const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
+    const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+    const routePolylineRef = useRef<google.maps.Polyline | null>(null);
     const lastZoneId = useRef<number | null>(null);
-
-    const { isSpeaking: narratorSpeaking, currentNarration, experienceLog, speak, unlockSpeech, speechUnlocked, voicePreference } = useVoiceNarrator({ muted: voiceMuted });
-
     const spokenLandmarks = useRef<Set<string>>(new Set());
     const lastDangerNarration = useRef<number>(0);
     const lastNarratedPos = useRef<{ lat: number; lng: number } | null>(null);
+    const dragStartY = useRef<number>(0);
+    const drawerStartH = useRef<number>(0);
+    const isDragging = useRef(false);
+    const drawerCurrentH = useRef(280);
+    const hasWelcomed = useRef(false);
 
-    const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
-        const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
-        const track = stream?.getVideoTracks()[0];
-        if (!track) return;
+    // ── 3. CUSTOM HOOKS ──
+    const { 
+        isSpeaking: narratorSpeaking, 
+        currentNarration, 
+        experienceLog, 
+        speak, 
+        unlockSpeech, 
+        speechUnlocked, 
+        voicePreference, 
+        selectedVoiceId, 
+        availableVoices, 
+        setVoice 
+    } = useVoiceNarrator({ muted: voiceMuted });
 
-        const capabilities = track.getCapabilities?.() as MediaTrackCapabilities & {
-            zoom?: { min?: number; max?: number; step?: number };
-        };
+    const speakRef = useRef(speak);
+    useEffect(() => { speakRef.current = speak; }, [speak]);
 
-        const minZoom = capabilities?.zoom?.min;
-        const maxZoom = capabilities?.zoom?.max;
-        if (typeof minZoom !== "number" || typeof maxZoom !== "number") {
-            setArZoomSupported(false);
-            return;
-        }
-
-        setArZoomSupported(true);
-        const requestedZoom = Math.min(Math.max(zoomLevel, minZoom), maxZoom);
-        track
-            .applyConstraints({ advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet] })
-            .catch(() => setArZoomSupported(false));
-    }, []);
-
-    const swapCameraZoom = useCallback(() => {
-        setArZoomLevel(current => {
-            const currentIndex = AR_ZOOM_LEVELS.indexOf(current);
-            const next = AR_ZOOM_LEVELS[(currentIndex + 1) % AR_ZOOM_LEVELS.length];
-            applyCameraZoom(next);
-            return next;
-        });
-    }, [applyCameraZoom]);
-
-    useEffect(() => {
-        const check = () => setIsMobile(window.innerWidth < 768);
-        check();
-        window.addEventListener("resize", check);
-        return () => window.removeEventListener("resize", check);
-    }, []);
-
-    useEffect(() => {
-        const oldAuthFailure = window.gm_authFailure;
-        window.gm_authFailure = () => {
-            setLocationError(
-                "Conexión rechazada por Google Maps. Verifica que la API esté habilitada en Google Cloud y que las restricciones de la llave permitan este despliegue."
-            );
-            setStatus("error");
-            requestingLocationRef.current = false;
-            if (oldAuthFailure) oldAuthFailure();
-        };
-
-        return () => {
-            window.gm_authFailure = oldAuthFailure;
-        };
-    }, []);
+    // ── 4. CALLBACKS ──
 
     const detectComuna = useCallback((lat: number, lng: number) => {
-        for (const comuna of CALI_COMUNAS) {
+        for (const comuna of comunas) {
             if (pointInPolygon(lat, lng, comuna.coords)) {
                 setCurrentComuna(comuna);
                 return;
             }
         }
         setCurrentComuna(null);
-    }, [CALI_COMUNAS]);
+    }, [comunas]);
 
     const drawRiskLayer = useCallback((map: google.maps.Map) => {
         polygonsRef.current.forEach(p => p.setMap(null));
         polygonsRef.current = [];
 
-        CALI_COMUNAS.forEach(comuna => {
+        comunas.forEach(comuna => {
             const cfg = RISK_CONFIG[comuna.risk];
             const paths = comuna.coords.map(([lat, lng]) => ({ lat, lng }));
 
@@ -252,17 +226,7 @@ export function UseHome() {
             polygon.addListener("click", (e: google.maps.PolyMouseEvent) => {
                 if (infoWindowRef.current) infoWindowRef.current.close();
                 const iw = new google.maps.InfoWindow({
-                    content: `
-            <div style="font-family:-apple-system,sans-serif;padding:4px 2px;min-width:180px">
-              <div style="font-size:12px;font-weight:700;color:#18181b;margin-bottom:4px">${comuna.name}</div>
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cfg.color}"></span>
-                <span style="font-size:11px;font-weight:600;color:${cfg.color}">Riesgo ${cfg.label}</span>
-              </div>
-              <div style="font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px">${comuna.description}</div>
-              <div style="font-size:10px;color:#9ca3af">${comuna.barrios.join(", ")}</div>
-            </div>
-          `,
+                    content: getComunaInfoWindowContent(comuna),
                     position: e.latLng,
                 });
                 iw.open(map);
@@ -271,7 +235,7 @@ export function UseHome() {
 
             polygonsRef.current.push(polygon);
         });
-    }, [CALI_COMUNAS]);
+    }, [comunas]);
 
     const drawHeatmapLayer = useCallback((map: google.maps.Map) => {
         if (heatmapRef.current) { heatmapRef.current.setMap(null); }
@@ -279,7 +243,7 @@ export function UseHome() {
         const weightMap: Record<RiskLevel, number> = { high: 1.0, medium: 0.65, low: 0.34, safe: 0.14 };
         const points: google.maps.visualization.WeightedLocation[] = [];
 
-        CALI_COMUNAS.forEach(comuna => {
+        comunas.forEach(comuna => {
             const centroid = getComunaCentroid(comuna);
             const baseWeight = weightMap[comuna.risk];
 
@@ -305,7 +269,7 @@ export function UseHome() {
         heatmapRef.current = new google.maps.visualization.HeatmapLayer({
             data: points,
             map,
-            radius: Math.max(42, Math.min(92, 118 - map.getZoom()! * 4)),
+            radius: Math.max(42, Math.min(92, 118 - (map.getZoom() ?? 13) * 4)),
             opacity: 0.58,
             gradient: [
                 "rgba(34,197,94,0)",
@@ -326,7 +290,7 @@ export function UseHome() {
         heatmapRef.current.addListener("map_changed", () => {
             if (!heatmapRef.current?.getMap()) google.maps.event.removeListener(zoomListener);
         });
-    }, [CALI_COMUNAS]);
+    }, [comunas]);
 
     const applyLayer = useCallback((mode: LayerMode, map: google.maps.Map) => {
         polygonsRef.current.forEach(p => p.setMap(null));
@@ -337,8 +301,27 @@ export function UseHome() {
         else if (mode === "heatmap") drawHeatmapLayer(map);
     }, [drawRiskLayer, drawHeatmapLayer]);
 
+    const selectComuna = useCallback((comuna: ComunaData) => {
+        if (!mapInstance.current) return;
+
+        setLayerMode("risk");
+        const centroid = getComunaCentroid(comuna);
+        mapInstance.current.panTo(centroid);
+        mapInstance.current.setZoom(15);
+        setCurrentComuna(comuna);
+
+        if (infoWindowRef.current) infoWindowRef.current.close();
+
+        const iw = new google.maps.InfoWindow({
+            content: getComunaInfoWindowContent(comuna),
+            position: centroid,
+        });
+        iw.open(mapInstance.current);
+        infoWindowRef.current = iw;
+    }, [setLayerMode]);
+
     const fetchNearby = useCallback(async (lat: number, lng: number) => {
-        if (!google.maps.places?.Place?.searchNearby) return;
+        if (!mapInstance.current || !google.maps.places) return;
         if (!isInsideCaliBounds(lat, lng)) return;
         if (lastFetchPos.current) {
             const dist = haversineDistance(lastFetchPos.current.lat, lastFetchPos.current.lng, lat, lng);
@@ -347,150 +330,143 @@ export function UseHome() {
         lastFetchPos.current = { lat, lng };
         setLoadingPlaces(true);
 
-        try {
-            const { places: nearbyPlaces } = await google.maps.places.Place.searchNearby({
-                fields: [
-                    "id",
-                    "displayName",
-                    "formattedAddress",
-                    "location",
-                    "rating",
-                    "userRatingCount",
-                    "types",
-                    "businessStatus",
-                    "priceLevel",
-                ],
-                locationRestriction: {
-                    center: { lat, lng },
-                    radius: 1000,
-                },
-                maxResultCount: 20,
-                rankPreference: google.maps.places.SearchNearbyRankPreference.DISTANCE,
-                language: "es",
-                region: "CO",
-            });
+        const service = new google.maps.places.PlacesService(mapInstance.current);
+        const accumulatedPlaces: NearbyPlace[] = [];
 
-            const sorted = nearbyPlaces
-                .filter(place => place.location)
-                .map((place): NearbyPlace => ({
-                    place_id: place.id,
-                    name: place.displayName ?? "Negocio",
-                    vicinity: place.formattedAddress ?? place.shortFormattedAddress ?? "Dirección no disponible",
-                    rating: place.rating ?? undefined,
-                    user_ratings_total: place.userRatingCount ?? undefined,
-                    types: place.types ?? [],
-                    geometry: { location: place.location! },
-                    business_status: place.businessStatus ?? undefined,
-                }))
-                .sort((a, b) => {
-                    const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
-                    const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
-                    return da - db;
-                });
+        const handleResults = (
+            results: google.maps.places.PlaceResult[] | null,
+            status: any,
+            pagination: google.maps.places.PlaceSearchPagination | null
+        ) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                const mapped = results.map((p): NearbyPlace => ({
+                    place_id: p.place_id!,
+                    name: p.name!,
+                    vicinity: p.vicinity || "Dirección no disponible",
+                    rating: p.rating,
+                    user_ratings_total: p.user_ratings_total,
+                    types: p.types || [],
+                    geometry: { location: p.geometry!.location! },
+                    business_status: p.business_status as any,
+                }));
 
-            setPlaces(sorted);
-        } catch (error) {
-            console.error("Nearby places search error:", error);
-        } finally {
-            setLoadingPlaces(false);
-        }
+                accumulatedPlaces.push(...mapped);
+
+                if (pagination?.hasNextPage) {
+                    setTimeout(() => pagination.nextPage(), 2000);
+                } else {
+                    const sorted = accumulatedPlaces.sort((a, b) => {
+                        const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
+                        const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
+                        return da - db;
+                    });
+                    setPlaces(sorted);
+                    setLoadingPlaces(false);
+                }
+            } else {
+                setLoadingPlaces(false);
+            }
+        };
+
+        service.nearbySearch({ location: { lat, lng }, radius: 1000 }, handleResults);
     }, []);
 
-    const fetchWikipediaSummary = async (title: string): Promise<{ extract: string; images: string[] } | null> => {
-        try {
-            const searchUrl = `https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(title + " Cali")}&format=json&origin=*`;
-            const searchResp = await fetch(searchUrl);
-            const searchData = await searchResp.json();
-
-            if (!searchData.query?.search?.length) return null;
-
-            const bestTitle = searchData.query.search[0].title;
-            const summaryUrl = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bestTitle)}`;
-            const mediaUrl = `https://es.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(bestTitle)}`;
-
-            const [summaryResp, mediaResp] = await Promise.all([
-                fetch(summaryUrl),
-                fetch(mediaUrl).catch(() => null)
-            ]);
-
-            if (!summaryResp.ok) return null;
-            const summaryData = await summaryResp.json();
-
-            let images: string[] = [];
-            if (summaryData.originalimage?.source) images.push(summaryData.originalimage.source);
-
-            if (mediaResp?.ok) {
-                const mediaData = await mediaResp.json();
-                const extraImages = mediaData.items
-                    ?.filter((item: any) => item.type === "image")
-                    ?.map((item: any) => item.srcset?.[0]?.src || item.src)
-                    ?.filter((src: string) => src && !images.includes(src))
-                    ?.slice(0, 5) || [];
-                images = [...images, ...extraImages];
-            }
-
-            return { extract: summaryData.extract, images };
-        } catch {
-            return null;
-        }
-    };
-
     const fetchLocalLandmarks = useCallback(async (lat: number, lng: number) => {
-        if (typeof google === "undefined" || !google.maps.places?.Place?.searchNearby) return;
+        if (!mapInstance.current || !google.maps.places) return;
         if (!isInsideCaliBounds(lat, lng)) return;
 
         setLoadingLandmarks(true);
-        try {
-            const { places: foundPlaces } = await google.maps.places.Place.searchNearby({
-                fields: ["id", "displayName", "location", "types", "editorialSummary"],
-                locationRestriction: { center: { lat, lng }, radius: 1000 },
-                includedPrimaryTypes: ["tourist_attraction", "museum", "church", "art_gallery", "historical_landmark"],
-                maxResultCount: 15,
-                language: "es",
-                region: "CO",
-            });
+        const service = new google.maps.places.PlacesService(mapInstance.current);
+        const accumulatedLandmarks: Landmark[] = [];
 
-            const newLandmarks: Landmark[] = await Promise.all(foundPlaces.map(async (p): Promise<Landmark> => {
-                const name = p.displayName ?? "Lugar Histórico";
-                const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
+        const handleResults = (
+            results: google.maps.places.PlaceResult[] | null,
+            status: any,
+            pagination: google.maps.places.PlaceSearchPagination | null
+        ) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                (async () => {
+                    const newLandmarks: Landmark[] = await Promise.all(results.map(async (p): Promise<Landmark> => {
+                        const name = p.name ?? "Lugar Histórico";
+                        const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
 
-                let history = p.editorialSummary;
-                let images: string[] = [];
+                        let history = "";
+                        let images: string[] = [];
 
-                const wikiData = await fetchWikipediaSummary(name);
-                if (wikiData) {
-                    history = wikiData.extract;
-                    images = wikiData.images;
-                }
+                        const wikiData = await fetchWikipediaSummary(name);
+                        if (wikiData) {
+                            history = wikiData.extract;
+                            images = wikiData.images;
+                        }
 
-                if (!history) {
-                    history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
-                }
+                        if (!history) {
+                            history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
+                        }
 
-                return {
-                    name,
-                    lat: p.location!.lat(),
-                    lng: p.location!.lng(),
-                    type: "monument",
-                    icon: "",
-                    description: typeLabel,
-                    history: history.length > 500 ? history.substring(0, 497) + "..." : history,
-                    radiusM: 200,
-                    place_id: p.id,
-                    images,
-                    prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
-                };
-            }));
+                        return {
+                            name,
+                            lat: p.geometry!.location!.lat(),
+                            lng: p.geometry!.location!.lng(),
+                            type: "monument",
+                            icon: "",
+                            description: typeLabel,
+                            history: history.length > 500 ? history.substring(0, 497) + "..." : history,
+                            radiusM: 200,
+                            place_id: p.place_id!,
+                            images,
+                            prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
+                        };
+                    }));
 
-            setLocalLandmarks(newLandmarks);
-        } catch (error) {
-            console.error("Landmark discovery error:", error);
-        } finally {
-            setLoadingLandmarks(false);
-        }
+                    accumulatedLandmarks.push(...newLandmarks);
+
+                    if (pagination?.hasNextPage) {
+                        setTimeout(() => pagination.nextPage(), 2000);
+                    } else {
+                        setLocalLandmarks(accumulatedLandmarks);
+                        setLoadingLandmarks(false);
+                    }
+                })();
+            } else {
+                setLoadingLandmarks(false);
+            }
+        };
+
+        service.nearbySearch({ location: { lat, lng }, radius: 1000, type: 'tourist_attraction' }, handleResults);
     }, [currentComuna]);
 
-    const initMap = async (lat: number, lng: number) => {
+    const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
+        const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
+        const track = stream?.getVideoTracks()[0];
+        if (!track) return;
+
+        const capabilities = track.getCapabilities?.() as MediaTrackCapabilities & {
+            zoom?: { min?: number; max?: number; step?: number };
+        };
+
+        const minZoom = capabilities?.zoom?.min;
+        const maxZoom = capabilities?.zoom?.max;
+        if (typeof minZoom !== "number" || typeof maxZoom !== "number") {
+            setArZoomSupported(false);
+            return;
+        }
+
+        setArZoomSupported(true);
+        const requestedZoom = Math.min(Math.max(zoomLevel, minZoom), maxZoom);
+        track.applyConstraints({ advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet] })
+             .catch(() => setArZoomSupported(false));
+    }, []);
+
+    const swapCameraZoom = useCallback(() => {
+        setArZoomLevel(current => {
+            const currentIndex = AR_ZOOM_LEVELS.indexOf(current);
+            const next = AR_ZOOM_LEVELS[(currentIndex + 1) % AR_ZOOM_LEVELS.length];
+            applyCameraZoom(next);
+            return next;
+        });
+    }, [applyCameraZoom]);
+
+    const initMap = useCallback(async (lat: number, lng: number) => {
         if (!mapRef.current) return;
         await loadGoogleMapsViaProxy();
         const { Map } = await ensureGoogleMapsLibraries();
@@ -584,7 +560,7 @@ export function UseHome() {
             onRemove() { this.div?.parentNode?.removeChild(this.div); }
         }
 
-        badgeRef.current = new BadgeOverlay(new google.maps.LatLng(lat, lng), mapInstance.current);
+        badgeRef.current = new BadgeOverlay(new google.maps.LatLng(center.lat, center.lng), mapInstance.current);
 
         const caliBounds = new google.maps.LatLngBounds(
             { lat: CALI_BOUNDS.south, lng: CALI_BOUNDS.west },
@@ -592,11 +568,11 @@ export function UseHome() {
         );
         mapInstance.current.fitBounds(caliBounds, isMobile ? 44 : 72);
         applyLayer(layerMode, mapInstance.current);
-        fetchNearby(lat, lng);
-        detectComuna(lat, lng);
-    };
+        fetchNearby(center.lat, center.lng);
+        detectComuna(center.lat, center.lng);
+    }, [isMobile, layerMode, applyLayer, fetchNearby, detectComuna]);
 
-    const handlePosition = async (position: GeolocationPosition) => {
+    const handlePosition = useCallback(async (position: GeolocationPosition) => {
         requestingLocationRef.current = false;
         setLocationError(null);
         setLocationDebug(null);
@@ -610,8 +586,7 @@ export function UseHome() {
                 await initMap(lat, lng);
             } catch (error) {
                 console.error("Map initialization error:", error);
-                requestingLocationRef.current = false;
-                setLocationError("No pudimos cargar Google Maps. Revisa la configuración de la API key en el servidor.");
+                setLocationError("No pudimos cargar Google Maps. Revisa la configuración de la API key.");
                 setStatus("error");
             }
         } else {
@@ -624,32 +599,32 @@ export function UseHome() {
             fetchNearby(lat, lng);
             detectComuna(lat, lng);
         }
-    };
+    }, [initMap, fetchNearby, detectComuna]);
 
-    const handleError = (err: GeolocationPositionError) => {
+    const handleError = useCallback((err: GeolocationPositionError) => {
         requestingLocationRef.current = false;
-        setLocationDebug(`Error ${err.code}: ${err.message || "sin mensaje del navegador"}`);
+        setLocationDebug(`Error ${err.code}: ${err.message || "sin mensaje"}`);
         if (err.code === err.PERMISSION_DENIED) {
-            setLocationError("Permiso de ubicación denegado. Actívalo en la configuración del navegador.");
+            setLocationError("Permiso de ubicación denegado. Actívalo en tu navegador.");
             setStatus("denied");
             return;
         }
-        setLocationError(err.code === err.TIMEOUT ? "La ubicación tardó demasiado. Revisa que el GPS esté activo e inténtalo de nuevo." : "No pudimos obtener tu ubicación. Revisa que el GPS esté activo e inténtalo de nuevo.");
+        setLocationError(err.code === err.TIMEOUT ? "La ubicación tardó demasiado." : "No pudimos obtener tu ubicación.");
         setStatus("error");
-    };
+    }, []);
 
     const requestLocation = useCallback((requestOptions?: { silent?: boolean }) => {
         if (requestingLocationRef.current) return;
         const silent = requestOptions?.silent ?? false;
         setLocationError(null);
-        if (!silent) setLocationDebug(`Origen: ${window.location.origin} | Seguro: ${window.isSecureContext ? "si" : "no"} | Geolocation: ${"geolocation" in navigator ? "si" : "no"}`);
+        if (!silent) setLocationDebug(`Origen: ${window.location.origin} | Seguro: ${window.isSecureContext ? "si" : "no"}`);
 
         if (!window.isSecureContext) {
-            if (!silent) { setLocationError("El navegador solo permite pedir ubicación en HTTPS o localhost."); setStatus("error"); }
+            if (!silent) { setLocationError("Se requiere HTTPS para la ubicación."); setStatus("error"); }
             return;
         }
         if (!navigator.geolocation) {
-            if (!silent) { setLocationError("Este navegador no soporta ubicación."); setStatus("error"); }
+            if (!silent) { setLocationError("Tu navegador no soporta ubicación."); setStatus("error"); }
             return;
         }
 
@@ -676,6 +651,52 @@ export function UseHome() {
             },
             options
         );
+    }, [handlePosition, handleError]);
+
+    // ── 5. EFFECTS ──
+
+    useEffect(() => {
+        const fetchComunas = async () => {
+            const CACHE_KEY = "caliguia_comunas_data";
+            const cached = localStorage.getItem(CACHE_KEY);
+            if (cached) { try { setComunas(JSON.parse(cached)); return; } catch (e) { console.error("Cache error", e); } }
+
+            try {
+                const res = await fetch("/api/comunas");
+                if (!res.ok) return;
+                const data = await res.json();
+                const transformed: ComunaData[] = data.features.map((f: any) => {
+                    const id = parseInt(f.properties.comuna);
+                    const riskInfo = COMUNA_RISK_MAP[id] || { risk: "medium", description: "Información en proceso." };
+                    const name = f.properties.nombre ? (f.properties.nombre.includes("Comuna") ? f.properties.nombre : `Comuna ${id} — ${f.properties.nombre}`) : `Comuna ${id}`;
+                    let coords: [number, number][] = [];
+                    if (f.geometry.type === "Polygon") coords = f.geometry.coordinates[0].map((c: any) => [c[1], c[0]]);
+                    else if (f.geometry.type === "MultiPolygon") coords = f.geometry.coordinates[0][0].map((c: any) => [c[1], c[0]]);
+                    return { id, name, risk: riskInfo.risk, description: riskInfo.description, barrios: [], coords };
+                });
+                setComunas(transformed);
+                localStorage.setItem(CACHE_KEY, JSON.stringify(transformed));
+            } catch (err) { console.error("Fetch Comunas failed:", err); }
+        };
+        fetchComunas();
+    }, []);
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 768);
+        check();
+        window.addEventListener("resize", check);
+        return () => window.removeEventListener("resize", check);
+    }, []);
+
+    useEffect(() => {
+        const oldAuthFailure = window.gm_authFailure;
+        window.gm_authFailure = () => {
+            setLocationError("Conexión rechazada por Google Maps. Verifica tu API Key.");
+            setStatus("error");
+            requestingLocationRef.current = false;
+            if (oldAuthFailure) oldAuthFailure();
+        };
+        return () => { window.gm_authFailure = oldAuthFailure; };
     }, []);
 
     useEffect(() => { if (mapInstance.current) applyLayer(layerMode, mapInstance.current); }, [layerMode, applyLayer]);
@@ -686,7 +707,7 @@ export function UseHome() {
             fetchLocalLandmarks(coords.lat, coords.lng);
             if (mapInstance.current) mapInstance.current.panTo({ lat: coords.lat, lng: coords.lng });
         }
-    }, [coords, CALI_COMUNAS, detectComuna, fetchLocalLandmarks]);
+    }, [coords, detectComuna, fetchLocalLandmarks]);
 
     useEffect(() => {
         if (currentComuna && currentComuna.id !== lastZoneId.current) { lastZoneId.current = currentComuna.id; setShowZoneAlert(true); }
@@ -714,13 +735,9 @@ export function UseHome() {
         };
         restoreLocation();
         return () => { isMounted = false; };
-    }, [detectComuna, requestLocation]);
+    }, [detectComuna, requestLocation, initMap]);
 
     useEffect(() => { return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); }; }, []);
-
-    const speakRef = useRef(speak);
-    useEffect(() => { speakRef.current = speak; }, [speak]);
-    const hasWelcomed = useRef(false);
 
     useEffect(() => {
         if (!coords || voiceMuted) return;
@@ -738,7 +755,7 @@ export function UseHome() {
         lastNarratedPos.current = { lat, lng };
 
         if (!voiceMuted) {
-            const dangerComuna = CALI_COMUNAS.find(c => c.risk === "high" && pointInPolygon(lat, lng, c.coords));
+            const dangerComuna = comunas.find(c => c.risk === "high" && pointInPolygon(lat, lng, c.coords));
             if (dangerComuna) {
                 const now = Date.now();
                 if (now - lastDangerNarration.current > 3 * 60 * 1000) {
@@ -763,8 +780,9 @@ export function UseHome() {
                 break;
             }
         }
-    }, [coords, voiceMuted]);
+    }, [coords, voiceMuted, comunas, localLandmarks]);
 
+    // ── 6. RENDER HELPERS ──
     const getDrawerBounds = () => ({ min: 92, middle: 340, max: window.innerHeight - 130 });
     const clampDrawerHeight = (height: number) => { const { min, max } = getDrawerBounds(); return Math.min(Math.max(height, min), max); };
     const onDragStart = (clientY: number) => { isDragging.current = true; setIsDrawerDragging(true); dragStartY.current = clientY; drawerStartH.current = drawerCurrentH.current; };
@@ -786,7 +804,8 @@ export function UseHome() {
         experienceMode, setExperienceMode,
         webcamRef, mapRef, mapInstance, routePolylineRef,
         requestLocation, swapCameraZoom, applyCameraZoom, onDrawerPointerDown, onDrawerPointerMove, onDrawerPointerEnd,
-        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, aiContext
+        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, aiContext, selectComuna,
+        selectedVoiceId, availableVoices, setVoice
     };
 }
 
@@ -804,4 +823,3 @@ export function useMap() {
     }
     return context;
 }
-
