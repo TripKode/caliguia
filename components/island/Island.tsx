@@ -27,12 +27,12 @@ const BAR_COUNT = 5;
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute }: AIFloatingIslandProps) {
   const { language, setLanguage } = useExperience();
-  const { 
-    experienceMode, 
-    setExperienceMode, 
-    selectedVoiceId, 
-    availableVoices, 
-    setVoice 
+  const {
+    experienceMode,
+    setExperienceMode,
+    selectedVoiceId,
+    availableVoices,
+    setVoice
   } = useMap();
 
   const toggleExperienceMode = () => setExperienceMode(experienceMode === "ar" ? "map" : "ar");
@@ -171,9 +171,9 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
         }}
       >
         <div className="flex items-center gap-3">
-          <img 
-            src="https://res.cloudinary.com/dqluumk10/image/upload/v1768316985/TripCode/Logos/luc79qy6rewoqovhxwrz.png" 
-            alt="Escudo de Santiago de Cali" 
+          <img
+            src="https://res.cloudinary.com/dqluumk10/image/upload/v1768316985/TripCode/Logos/luc79qy6rewoqovhxwrz.png"
+            alt="Escudo de Santiago de Cali"
             className="w-7 h-7 object-contain shrink-0 opacity-90 drop-shadow-sm"
           />
           <div ref={voiceBtnRef} className="relative">
@@ -400,7 +400,7 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
             </div>
           )}
           <div className="flex items-center gap-2 mt-3" style={{ background: "rgba(0,0,0,0.04)", borderRadius: "12px", border: "1px solid rgba(0,0,0,0.07)", padding: "4px 4px 4px 12px" }}>
-            <input ref={inputRef} type="text" value={inputValue} onChange={e => setInputValue(e.target.value)} onKeyDown={handleKey} placeholder="Pregúntale al agente..." className="flex-1 bg-transparent text-[12px] text-zinc-700 outline-none font-medium" />
+            <input ref={inputRef} type="text" value={inputValue} onChange={e => setInputValue(e.target.value)} onKeyDown={handleKey} placeholder="Pregúntale al agente..." className="flex-1 text-base bg-transparent text-[12px] text-zinc-700 outline-none font-medium" />
             <button onClick={sendMessage} disabled={!inputValue.trim() || isLoading} className="w-7 h-7 rounded-[9px] flex items-center justify-center shrink-0" style={{ background: inputValue.trim() && !isLoading ? "#3b82f6" : "rgba(0,0,0,0.07)" }}>
               {isLoading ? <div className="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={inputValue.trim() ? "white" : "#9ca3af"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>}
             </button>
