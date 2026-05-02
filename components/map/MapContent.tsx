@@ -1,11 +1,15 @@
 "use client"
 
+import { useEffect, useState, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Webcam from "react-webcam";
 import { AIFloatingIsland } from "@/components/island/Island";
 import { useMap } from "@/hooks/UseMap";
 import { Panel } from "@/components/profile/Panel";
 import { type LayerMode } from "@/components/map/types";
+import { useARVision } from "@/hooks/useARVision";
+import { useExperience } from "@/components/providers/ExperienceProvider";
+import { fetchNarration } from "@/components/providers/VoiceNarrator";
 
 function MapContent() {
     const {
@@ -37,14 +41,144 @@ function MapContent() {
         locationDebug,
         voicePreference,
         unlockSpeech,
+        speechUnlocked,
         expandedLandmark,
         setExpandedLandmark,
         localLandmarks,
         currentImageIdx,
         setCurrentImageIdx,
         mapInstance,
-        routePolylineRef
+        routePolylineRef,
+        narratorSpeaking,
+        currentNarration,
+        speak,
+        currentComuna,
+        places,
+        toggle3D
     } = useMap();
+
+    const [is3DActive, setIs3DActive] = useState(true); // El mapa inicia en 3D por defecto
+    const [conversation, setConversation] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+    const [userQuestion, setUserQuestion] = useState("");
+    const [isAsking, setIsAsking] = useState(false);
+    const [routePins, setRoutePins] = useState<any[]>([]);
+    const routeMarkersRef = useRef<any[]>([]);
+
+
+
+    // Cargar conversación de la sesión al abrir un landmark
+    useEffect(() => {
+        if (expandedLandmark) {
+            const saved = sessionStorage.getItem(`chat_${expandedLandmark}`);
+            if (saved) {
+                setConversation(JSON.parse(saved));
+            } else {
+                setConversation([]);
+            }
+        }
+    }, [expandedLandmark]);
+
+    const askAI = async (question: string, landmarkName: string) => {
+        if (!question.trim() || isAsking) return;
+
+        const newMsg: { role: 'user' | 'ai', text: string } = { role: 'user', text: question };
+        const updatedChat = [...conversation, newMsg];
+        setConversation(updatedChat);
+        setUserQuestion("");
+        setIsAsking(true);
+
+        // ── Construir contexto dinámico ──
+        let safetyContext = "";
+        if (currentComuna) {
+            safetyContext = `Contexto de seguridad: Estamos en ${currentComuna.name}. Nivel de riesgo: ${currentComuna.risk}. ${currentComuna.description}`;
+        }
+
+        const nearbyContext = places.length > 0
+            ? `Lugares cercanos detectados: ${places.slice(0, 5).map(p => `${p.name} (${p.types?.join(', ') || 'negocio'})`).join(', ')}`
+            : "";
+
+        const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
+        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : null;
+        const profileContext = userProfile
+            ? `Perfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}.`
+            : "";
+
+        const prompt = `
+            ${safetyContext}
+            ${nearbyContext}
+            ${profileContext}
+            El usuario está viendo información sobre el monumento "${landmarkName}" y pregunta: "${question}".
+            Responde como CaliGuía, el guía experto, amable y profesional. 
+            Si te preguntan por seguridad, usa el contexto proporcionado con honestidad pero sin alarmar.
+            Si te preguntan por recomendaciones (café, comida, etc.), usa la lista de lugares cercanos si es relevante, o recomienda sitios icónicos de este barrio específico.
+            Personaliza tu respuesta basándote en los intereses del usuario si es posible.
+            Sé breve, natural y fascinante. Máximo 50 palabras.
+        `;
+
+        try {
+            const response = await fetchNarration(prompt, "info", language || "es");
+            if (response) {
+                const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
+                const finalChat = [...updatedChat, aiMsg];
+                setConversation(finalChat);
+                sessionStorage.setItem(`chat_${landmarkName}`, JSON.stringify(finalChat));
+                if (speak) {
+                    speak({ type: "info", text: response, title: landmarkName, icon: "💬" });
+                }
+            }
+        } catch (err) {
+            console.error("Error asking AI:", err);
+        } finally {
+            setIsAsking(false);
+        }
+    };
+
+    const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
+    const { language } = useExperience();
+    const [isARScanning, setIsARScanning] = useState(false);
+
+    useEffect(() => {
+        if (experienceMode === "ar" && isReady) {
+            startAnalysis(async (detectedText) => {
+                // D. Conectar con VoiceNarrator real (no window.speechSynthesis crudo)
+                // Activar ondas de la AIFloatingIsland
+                setIsARScanning(true);
+                try {
+                    // El texto ya viene de /api/vision con el geofencing de Cali
+                    // Lo pasamos por /api/narrate para darle el tono caleño de CaliGuía
+                    const response = await fetch("/api/narrate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ prompt: detectedText, type: "monument", language }),
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.text) {
+                            // Usar el speak() del VoiceNarrator con toda la lógica
+                            // de cola de prioridad, voz caleña seleccionada y mute
+                            speak({
+                                type: "monument",
+                                text: data.text,
+                                title: detectedText.split(" ").slice(0, 4).join(" "),
+                                icon: "🏛️",
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("AR Narrate error:", e);
+                } finally {
+                    setIsARScanning(false);
+                }
+            });
+        } else {
+            stopAnalysis();
+            setIsARScanning(false);
+        }
+        return () => {
+            stopAnalysis();
+            setIsARScanning(false);
+        };
+    }, [experienceMode, isReady, startAnalysis, stopAnalysis, speak, language]);
 
     return (
         <div className="relative w-full h-dvh overflow-hidden bg-[#f7f6f3] font-sans flex">
@@ -128,6 +262,7 @@ function MapContent() {
                     context={aiContext}
                     isMuted={voiceMuted}
                     onToggleMute={() => setVoiceMuted(m => !m)}
+                    isScanningAR={isARScanning || narratorSpeaking}
                 />
 
                 {/* Floating Layer Toggles - Visible even with drawer open */}
@@ -146,6 +281,20 @@ function MapContent() {
                                 {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
                             </motion.button>
                         ))}
+                        <div className="w-px h-3 bg-black/10 mx-1" />
+                        <motion.button
+                            onClick={() => {
+                                toggle3D();
+                                setIs3DActive(!is3DActive);
+                            }}
+                            whileTap={{ scale: 0.95 }}
+                            className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-tight transition-all md:px-3 md:py-1.5 md:text-[10px] md:tracking-wider ${is3DActive
+                                ? "bg-zinc-900 text-white shadow-sm"
+                                : "text-zinc-500 hover:bg-black/5"
+                                }`}
+                        >
+                            3D
+                        </motion.button>
                     </div>
                 )}
             </div>
@@ -235,48 +384,65 @@ function MapContent() {
                 </div>
             )}
 
-            {/* ── Voice Permission Modal ── */}
+            {/* ── Immersive Splash Screen / Audio Unlocker ── */}
             <AnimatePresence>
-                {voicePreference === "unknown" && (
+                {(!speechUnlocked && !voiceMuted) && (
                     <motion.div
+                        className="absolute inset-0 z-100 flex flex-col items-center justify-center bg-black/40 backdrop-blur-md px-6"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="absolute inset-0 z-100 flex items-center justify-center bg-black/40 backdrop-blur-sm px-6"
+                        exit={{ opacity: 0, backdropFilter: "blur(0px)", transition: { duration: 0.4 } }}
                     >
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0, y: 20 }}
                             animate={{ scale: 1, opacity: 1, y: 0 }}
-                            className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl text-center"
+                            className="w-full max-w-sm bg-white/95 rounded-[32px] p-8 shadow-2xl text-center border border-white/50 relative overflow-hidden"
                         >
-                            <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round">
-                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                    <line x1="12" y1="19" x2="12" y2="22" />
-                                    <line x1="8" y1="22" x2="16" y2="22" />
-                                </svg>
-                            </div>
-                            <h2 className="text-xl font-bold text-zinc-800 mb-3">¿Activar guía de voz?</h2>
-                            <p className="text-[14px] text-zinc-500 leading-relaxed mb-8">
-                                CaliGuía puede narrarte la historia y curiosidades de los lugares que visites. ¿Deseas activar el audio?
-                            </p>
-                            <div className="flex flex-col gap-3">
-                                <button
-                                    onClick={() => unlockSpeech(true)}
-                                    className="w-full py-4 bg-blue-500 text-white rounded-2xl font-bold text-[15px] shadow-lg shadow-blue-500/25 active:scale-[0.98] transition-transform"
-                                >
-                                    Sí, activar audio
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        unlockSpeech(false);
-                                        setVoiceMuted(true);
-                                    }}
-                                    className="w-full py-3 text-zinc-400 font-semibold text-[14px] hover:text-zinc-600"
-                                >
-                                    No, tal vez luego
-                                </button>
+                            {/* Decorative background glow */}
+                            <div className="absolute -top-20 -left-20 w-40 h-40 bg-blue-400/20 rounded-full blur-3xl" />
+                            <div className="absolute -bottom-20 -right-20 w-40 h-40 bg-purple-400/20 rounded-full blur-3xl" />
+
+                            <div className="relative">
+                                <div className="w-20 h-20 bg-linear-to-tr from-blue-500 to-blue-400 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-500/30 border border-blue-400/50">
+                                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                        <line x1="12" y1="19" x2="12" y2="22" />
+                                        <line x1="8" y1="22" x2="16" y2="22" />
+                                    </svg>
+                                </div>
+
+                                <h2 className="text-2xl font-black text-zinc-800 mb-2 tracking-tight">
+                                    {voicePreference === "unknown" ? "Conoce a CaliGuía" : "¡Hola de nuevo!"}
+                                </h2>
+
+                                <p className="text-[14px] text-zinc-500 font-medium leading-relaxed mb-8">
+                                    {voicePreference === "unknown"
+                                        ? "Déjate llevar. Activa el audio para escuchar datos curiosos y la historia de los lugares que vas descubriendo por Cali."
+                                        : "Toca para iniciar el recorrido y despertar a tu guía virtual."}
+                                </p>
+
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        onClick={() => unlockSpeech(true)}
+                                        className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold text-[16px] shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 hover:bg-blue-700"
+                                    >
+                                        {voicePreference === "unknown" ? "Activar Guía de Voz" : "Empezar Recorrido"}
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                                    </button>
+
+                                    {voicePreference === "unknown" && (
+                                        <button
+                                            onClick={() => {
+                                                unlockSpeech(false);
+                                                setVoiceMuted(true);
+                                            }}
+                                            className="w-full py-3 text-zinc-400 font-semibold text-[14px] hover:text-zinc-600 active:scale-[0.98] transition-all"
+                                        >
+                                            No, explorar en silencio
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </motion.div>
                     </motion.div>
@@ -361,47 +527,277 @@ function MapContent() {
                                                 </div>
                                             )}
 
-                                            <div className="p-8 flex flex-col gap-8">
-                                                <div className="flex flex-col gap-4">
+                                            <div className="p-8 flex flex-col gap-6">
+                                                {/* AI Monologue (Dynamic text) */}
+                                                <div className="flex flex-col gap-3">
                                                     <div className="flex items-center gap-2">
-                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
-                                                        <p className="text-[12px] font-black uppercase tracking-widest text-blue-500">Dato Cultural</p>
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">Escuchando a CaliGuía</p>
                                                     </div>
-                                                    <div className="bg-blue-50 rounded-2xl p-5 border border-blue-100">
-                                                        <p className="text-[16px] text-zinc-800 font-bold leading-relaxed">
-                                                            {landmark.history.split('.')[0]}. {landmark.history.split('.')[1] ? landmark.history.split('.')[1] + '.' : ''}
-                                                        </p>
+
+                                                    <div className="min-h-[60px] flex flex-col justify-center">
+                                                        <AnimatePresence mode="wait">
+                                                            <motion.p
+                                                                key={currentNarration?.text || "default"}
+                                                                initial={{ opacity: 0, y: 10 }}
+                                                                animate={{ opacity: 1, y: 0 }}
+                                                                exit={{ opacity: 0, y: -10 }}
+                                                                className="text-[15px] text-zinc-800 font-medium leading-relaxed italic"
+                                                            >
+                                                                {currentNarration?.text || "Toca 'Expandir' para que te cuente un secreto sobre este lugar..."}
+                                                            </motion.p>
+                                                        </AnimatePresence>
                                                     </div>
                                                 </div>
 
-                                                <div className="flex flex-col gap-3">
-                                                    <div className="flex items-center gap-2">
-                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" /><path d="M8 7h6" /><path d="M8 11h8" /></svg>
-                                                        <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">Contexto Histórico</p>
+                                                {/* Chat History (Mini version) */}
+                                                {conversation.length > 0 && (
+                                                    <div className="flex flex-col gap-3 max-h-[150px] overflow-y-auto pr-2 no-scrollbar border-t border-zinc-100 pt-4">
+                                                        {conversation.map((msg, i) => (
+                                                            <motion.div
+                                                                key={i}
+                                                                initial={{ opacity: 0, x: msg.role === 'user' ? 10 : -10 }}
+                                                                animate={{ opacity: 1, x: 0 }}
+                                                                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                                                            >
+                                                                <p className={`text-[11px] px-3 py-1.5 rounded-2xl ${msg.role === 'user' ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-50 text-blue-700 font-medium'}`}>
+                                                                    {msg.text}
+                                                                </p>
+                                                            </motion.div>
+                                                        ))}
                                                     </div>
-                                                    <p className="text-[14px] text-zinc-500 leading-relaxed font-medium">
-                                                        {landmark.history}
-                                                    </p>
+                                                )}
+
+                                                {/* Recommended Questions */}
+                                                <div className="flex flex-wrap gap-2">
+                                                    {["¿Cuál es su historia?", "¿Qué hay cerca?", "¿A qué hora cierran?"].map((q) => (
+                                                        <button
+                                                            key={q}
+                                                            onClick={() => askAI(q, landmark.name)}
+                                                            className="px-3 py-1.5 rounded-full bg-zinc-50 border border-zinc-100 text-[11px] font-bold text-zinc-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-100 transition-all active:scale-95"
+                                                        >
+                                                            {q}
+                                                        </button>
+                                                    ))}
                                                 </div>
 
-                                                <div className="flex flex-col gap-3">
+                                                {/* Input Field */}
+                                                <div className="relative mt-2">
+                                                    <input
+                                                        type="text"
+                                                        value={userQuestion}
+                                                        onChange={(e) => setUserQuestion(e.target.value)}
+                                                        onKeyDown={(e) => e.key === 'Enter' && askAI(userQuestion, landmark.name)}
+                                                        placeholder="Pregúntale lo que quieras..."
+                                                        className="w-full bg-zinc-100 border-none rounded-2xl px-5 py-4 text-[14px] font-medium focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-zinc-400"
+                                                    />
+                                                    <button
+                                                        onClick={() => askAI(userQuestion, landmark.name)}
+                                                        disabled={!userQuestion.trim() || isAsking}
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/30 active:scale-90 transition-all disabled:opacity-50 disabled:shadow-none"
+                                                    >
+                                                        {isAsking ? (
+                                                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                                                        ) : (
+                                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m5 12 7-7 7 7M12 5v14" /></svg>
+                                                        )}
+                                                    </button>
+                                                </div>
+
+                                                <div className="flex flex-col gap-3 mt-4">
                                                     <button
                                                         onClick={async () => {
-                                                            if (!coords || !mapInstance.current) return;
+                                                            if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
                                                             setExpandedLandmark(null);
+
+                                                            // --- Clases de Overlays Dinámicos ---
+                                                            class InterestOverlay extends google.maps.OverlayView {
+                                                                private div: HTMLDivElement | null = null;
+                                                                private isExpanded = false;
+                                                                constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map, private name: string, private type: string) {
+                                                                    super();
+                                                                    this.setMap(map);
+                                                                }
+                                                                onAdd() {
+                                                                    this.div = document.createElement("div");
+                                                                    this.div.style.position = "absolute";
+                                                                    this.div.style.cursor = "pointer";
+                                                                    this.div.style.zIndex = "997";
+                                                                    this.render();
+                                                                    this.div.onclick = () => {
+                                                                        this.isExpanded = !this.isExpanded;
+                                                                        this.render();
+                                                                    };
+                                                                    this.getPanes()!.floatPane.appendChild(this.div);
+                                                                }
+                                                                render() {
+                                                                    if (!this.div) return;
+                                                                    const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
+
+                                                                    if (this.isExpanded) {
+                                                                        this.div.innerHTML = `
+                                                                            <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
+                                                                                <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
+                                                                                <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
+                                                                            </div>
+                                                                        `;
+                                                                    } else {
+                                                                        this.div.innerHTML = `
+                                                                            <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">
+                                                                                ${icon}
+                                                                            </div>
+                                                                        `;
+                                                                    }
+                                                                }
+                                                                draw() {
+                                                                    const projection = this.getProjection();
+                                                                    if (!projection || !this.div) return;
+                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                                                                    if (p) {
+                                                                        this.div.style.left = p.x + "px";
+                                                                        this.div.style.top = p.y + "px";
+                                                                        this.div.style.transform = "translateX(-50%) translateY(-50%)";
+                                                                    }
+                                                                }
+                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+                                                            }
+
+                                                            class DestinationOverlay extends google.maps.OverlayView {
+                                                                private div: HTMLDivElement | null = null;
+                                                                constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map) {
+                                                                    super();
+                                                                    this.setMap(map);
+                                                                }
+                                                                onAdd() {
+                                                                    this.div = document.createElement("div");
+                                                                    this.div.style.position = "absolute";
+                                                                    this.div.style.zIndex = "998";
+                                                                    this.div.innerHTML = `
+                                                                        <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
+                                                                            <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
+                                                                            <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">Destino</span>
+                                                                        </div>
+                                                                        <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
+                                                                    `;
+                                                                    this.getPanes()!.floatPane.appendChild(this.div);
+                                                                }
+                                                                draw() {
+                                                                    const projection = this.getProjection();
+                                                                    if (!projection || !this.div) return;
+                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                                                                    if (p) {
+                                                                        this.div.style.left = p.x + "px";
+                                                                        this.div.style.top = p.y + "px";
+                                                                        this.div.style.transform = "translateX(-50%) translateY(-100%)";
+                                                                    }
+                                                                }
+                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+                                                            }
+
+                                                            // 1. Obtener perfil del usuario
+                                                            const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
+                                                            const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+
+                                                            // 2. Limpiar pines de ruta anteriores
+                                                            routeMarkersRef.current.forEach(m => m.setMap(null));
+                                                            routeMarkersRef.current = [];
+
+                                                            // 3. Buscar lugares de interés en el camino
+                                                            const waypoints: google.maps.DirectionsWaypoint[] = [];
+                                                            const interestPoints: any[] = [];
+
+                                                            // Bounding box expandido para encontrar lugares en el trayecto
+                                                            const minLat = Math.min(coords.lat, landmark.lat) - 0.002;
+                                                            const maxLat = Math.max(coords.lat, landmark.lat) + 0.002;
+                                                            const minLng = Math.min(coords.lng, landmark.lng) - 0.002;
+                                                            const maxLng = Math.max(coords.lng, landmark.lng) + 0.002;
+
+                                                            // Filtrar landmarks que coincidan con intereses y estén en el área del trayecto
+                                                            const relevantLandmarks = localLandmarks.filter(l => {
+                                                                const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
+                                                                if (!inBox) return false;
+
+                                                                const interests = userProfile.interests;
+                                                                const name = l.name.toLowerCase();
+                                                                const desc = (l.description || "").toLowerCase();
+
+                                                                return (
+                                                                    (interests.includes('cultura') && (desc.includes('heritage') || desc.includes('architecture') || desc.includes('theatre') || desc.includes('patrimonio'))) ||
+                                                                    (interests.includes('naturaleza') && (desc.includes('park') || desc.includes('nature') || desc.includes('river') || desc.includes('parque') || desc.includes('río'))) ||
+                                                                    (interests.includes('salsa') && (name.includes('salsa') || name.includes('dance') || name.includes('baile'))) ||
+                                                                    (interests.includes('arte') && (desc.includes('art') || desc.includes('gallery') || desc.includes('mural') || desc.includes('design'))) ||
+                                                                    (interests.includes('historia') && (desc.includes('history') || desc.includes('museum') || desc.includes('colonia') || desc.includes('histórico'))) ||
+                                                                    (interests.includes('bebidas') && (desc.includes('drink') || desc.includes('gastronomy') || desc.includes('market') || desc.includes('lulada')))
+                                                                );
+                                                            });
+
+                                                            // Tomar hasta 5 puntos interesantes para la ruta
+                                                            relevantLandmarks.slice(0, 5).forEach(l => {
+                                                                waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
+                                                                interestPoints.push(l);
+                                                            });
+
                                                             const directionsService = new google.maps.DirectionsService();
                                                             directionsService.route(
                                                                 {
                                                                     origin: { lat: coords.lat, lng: coords.lng },
                                                                     destination: { lat: landmark.lat, lng: landmark.lng },
+                                                                    waypoints: waypoints,
+                                                                    optimizeWaypoints: true,
                                                                     travelMode: google.maps.TravelMode.WALKING,
                                                                 },
-                                                                (result, status) => {
-                                                                    if (status === "OK" && routePolylineRef.current && result) {
+                                                                async (result, status) => {
+                                                                    if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
+                                                                        // Configurar estilo según perfil
+                                                                        if (userProfile.style === 'caminante') {
+                                                                            routePolylineRef.current.setOptions({
+                                                                                strokeColor: "#3b82f6",
+                                                                                strokeOpacity: 0, // Totalmente invisible la línea base
+                                                                                icons: [{
+                                                                                    icon: {
+                                                                                        path: google.maps.SymbolPath.CIRCLE,
+                                                                                        fillOpacity: 1,
+                                                                                        scale: 2.2,
+                                                                                        fillColor: "#3b82f6",
+                                                                                        strokeColor: "#ffffff",
+                                                                                        strokeWeight: 0.5
+                                                                                    },
+                                                                                    offset: '0',
+                                                                                    repeat: '12px'
+                                                                                }]
+                                                                            });
+                                                                        } else {
+                                                                            routePolylineRef.current.setOptions({
+                                                                                strokeColor: "#1e293b",
+                                                                                strokeOpacity: 1,
+                                                                                strokeWeight: 5,
+                                                                                icons: []
+                                                                            });
+                                                                        }
+
                                                                         routePolylineRef.current.setPath(result.routes[0].overview_path);
                                                                         routePolylineRef.current.setVisible(true);
                                                                         const bounds = result.routes[0].bounds;
-                                                                        mapInstance.current?.fitBounds(bounds);
+                                                                        mapInstance.current.fitBounds(bounds);
+
+                                                                        // Añadir pines de interés usando el nuevo Overlay premium interactivo
+                                                                        interestPoints.forEach(ip => {
+                                                                            const overlay = new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
+                                                                            routeMarkersRef.current.push(overlay);
+                                                                        });
+
+                                                                        // Añadir pin de DESTINO
+                                                                        const destOverlay = new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
+                                                                        routeMarkersRef.current.push(destOverlay);
+
+                                                                        if (speak) {
+                                                                            speak({
+                                                                                type: "info",
+                                                                                text: `He trazado una ruta especial para ti pasando por ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' y ') : 'los puntos más bonitos de la ciudad'}. ¡Disfruta el camino!`,
+                                                                                title: "Ruta Personalizada",
+                                                                                icon: "✨"
+                                                                            });
+                                                                        }
                                                                     } else {
                                                                         const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
                                                                         window.open(url, '_blank');
@@ -409,10 +805,10 @@ function MapContent() {
                                                                 }
                                                             );
                                                         }}
-                                                        className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-blue-600 text-white font-bold text-[15px] shadow-lg shadow-blue-500/25 active:scale-[0.98] transition-transform"
+                                                        className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-zinc-900 text-white font-bold text-[15px] shadow-lg active:scale-[0.98] transition-transform"
                                                     >
-                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                                                        Cómo llegar caminando
+                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 18V5l12-2v13l-12 2zm-3.5 3c.828 0 1.5-.672 1.5-1.5s-.672-1.5-1.5-1.5-1.5.672-1.5 1.5.672 1.5 1.5 1.5z" /></svg>
+                                                        Trazar Ruta Personalizada
                                                     </button>
                                                 </div>
                                             </div>

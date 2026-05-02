@@ -32,6 +32,7 @@ import {
 import { useMap } from "@/hooks/UseMap";
 import { haversineDistance, getComunaCentroid } from "@/components/map/handlers";
 import { type RiskLevel } from "@/components/map/types";
+import { fetchNarration } from "@/components/providers/VoiceNarrator";
 
 export function Panel() {
     const [currentPage, setCurrentPage] = useState(1);
@@ -62,7 +63,8 @@ export function Panel() {
         setShowZoneAlert,
         comunas: CALI_COMUNAS,
         setCurrentComuna,
-        selectComuna
+        selectComuna,
+        speak
     } = useMap();
 
     useEffect(() => {
@@ -169,27 +171,175 @@ export function Panel() {
                                                 <div className="flex items-center gap-2 mt-4">
                                                     <button
                                                         onClick={async () => {
-                                                            if (!coords || !mapInstance.current) return;
+                                                            if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
+                                                            
+                                                            // --- Clases de Overlays Dinámicos ---
+                                                            class InterestOverlay extends google.maps.OverlayView {
+                                                                private div: HTMLDivElement | null = null;
+                                                                private isExpanded = false;
+                                                                constructor(private pos: {lat: number, lng: number}, private map: google.maps.Map, private name: string, private type: string) { 
+                                                                    super(); 
+                                                                    this.setMap(map); 
+                                                                }
+                                                                onAdd() {
+                                                                    this.div = document.createElement("div");
+                                                                    this.div.style.position = "absolute";
+                                                                    this.div.style.cursor = "pointer";
+                                                                    this.div.style.zIndex = "997";
+                                                                    this.render();
+                                                                    this.div.onclick = () => {
+                                                                        this.isExpanded = !this.isExpanded;
+                                                                        this.render();
+                                                                    };
+                                                                    this.getPanes()!.floatPane.appendChild(this.div);
+                                                                }
+                                                                render() {
+                                                                    if (!this.div) return;
+                                                                    const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
+                                                                    if (this.isExpanded) {
+                                                                        this.div.innerHTML = `
+                                                                            <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
+                                                                                <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
+                                                                                <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
+                                                                            </div>
+                                                                        `;
+                                                                    } else {
+                                                                        this.div.innerHTML = `
+                                                                            <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">
+                                                                                ${icon}
+                                                                            </div>
+                                                                        `;
+                                                                    }
+                                                                }
+                                                                draw() {
+                                                                    const projection = this.getProjection();
+                                                                    if (!projection || !this.div) return;
+                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                                                                    if (p) {
+                                                                        this.div.style.left = p.x + "px";
+                                                                        this.div.style.top = p.y + "px";
+                                                                        this.div.style.transform = "translateX(-50%) translateY(-50%)";
+                                                                    }
+                                                                }
+                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+                                                            }
+
+                                                            class DestinationOverlay extends google.maps.OverlayView {
+                                                                private div: HTMLDivElement | null = null;
+                                                                constructor(private pos: {lat: number, lng: number}, private map: google.maps.Map) { 
+                                                                    super(); 
+                                                                    this.setMap(map); 
+                                                                }
+                                                                onAdd() {
+                                                                    this.div = document.createElement("div");
+                                                                    this.div.style.position = "absolute";
+                                                                    this.div.style.zIndex = "998";
+                                                                    this.div.innerHTML = `
+                                                                        <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
+                                                                            <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
+                                                                            <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">Destino</span>
+                                                                        </div>
+                                                                        <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
+                                                                    `;
+                                                                    this.getPanes()!.floatPane.appendChild(this.div);
+                                                                }
+                                                                draw() {
+                                                                    const projection = this.getProjection();
+                                                                    if (!projection || !this.div) return;
+                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                                                                    if (p) {
+                                                                        this.div.style.left = p.x + "px";
+                                                                        this.div.style.top = p.y + "px";
+                                                                        this.div.style.transform = "translateX(-50%) translateY(-100%)";
+                                                                    }
+                                                                }
+                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+                                                            }
+
+                                                            // 1. Obtener perfil
+                                                            const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
+                                                            const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+
+                                                            // 2. Limpiar pines anteriores (necesitamos acceder a routeMarkersRef o similar)
+                                                            // Nota: routeMarkersRef está en MapContent, aquí usaremos una limpieza manual si es posible
+                                                            // o confiaremos en la limpieza de MapContent al reiniciarse.
+                                                            
+                                                            const waypoints: google.maps.DirectionsWaypoint[] = [];
+                                                            const interestPoints: any[] = [];
+
+                                                            const minLat = Math.min(coords.lat, landmark.lat) - 0.002;
+                                                            const maxLat = Math.max(coords.lat, landmark.lat) + 0.002;
+                                                            const minLng = Math.min(coords.lng, landmark.lng) - 0.002;
+                                                            const maxLng = Math.max(coords.lng, landmark.lng) + 0.002;
+
+                                                            const relevantLandmarks = localLandmarks.filter(l => {
+                                                                const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
+                                                                if (!inBox) return false;
+                                                                const interests = userProfile.interests;
+                                                                const n = l.name.toLowerCase();
+                                                                const d = (l.description || "").toLowerCase();
+                                                                return (
+                                                                    (interests.includes('cultura') && (d.includes('heritage') || d.includes('architecture') || d.includes('patrimonio'))) ||
+                                                                    (interests.includes('naturaleza') && (d.includes('park') || d.includes('parque') || d.includes('river'))) ||
+                                                                    (interests.includes('salsa') && (n.includes('salsa') || n.includes('dance')))
+                                                                );
+                                                            });
+
+                                                            relevantLandmarks.slice(0, 5).forEach(l => {
+                                                                waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
+                                                                interestPoints.push(l);
+                                                            });
+
                                                             const directionsService = new google.maps.DirectionsService();
                                                             directionsService.route(
                                                                 {
                                                                     origin: { lat: coords.lat, lng: coords.lng },
                                                                     destination: { lat: landmark.lat, lng: landmark.lng },
+                                                                    waypoints: waypoints,
+                                                                    optimizeWaypoints: true,
                                                                     travelMode: google.maps.TravelMode.WALKING,
                                                                 },
                                                                 (result, status) => {
-                                                                    if (status === "OK" && routePolylineRef.current && result) {
+                                                                    if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
+                                                                        // Estilo según perfil
+                                                                        if (userProfile.style === 'caminante') {
+                                                                            routePolylineRef.current.setOptions({
+                                                                                strokeColor: "#3b82f6",
+                                                                                strokeOpacity: 0,
+                                                                                icons: [{
+                                                                                    icon: { path: google.maps.SymbolPath.CIRCLE, fillOpacity: 1, scale: 2.2, fillColor: "#3b82f6", strokeColor: "#ffffff", strokeWeight: 0.5 },
+                                                                                    offset: '0',
+                                                                                    repeat: '12px'
+                                                                                }]
+                                                                            });
+                                                                        } else {
+                                                                            routePolylineRef.current.setOptions({
+                                                                                strokeColor: "#1e293b",
+                                                                                strokeOpacity: 1,
+                                                                                strokeWeight: 5,
+                                                                                icons: []
+                                                                            });
+                                                                        }
+
                                                                         routePolylineRef.current.setPath(result.routes[0].overview_path);
                                                                         routePolylineRef.current.setVisible(true);
                                                                         const bounds = result.routes[0].bounds;
-                                                                        mapInstance.current?.fitBounds(bounds);
+                                                                        mapInstance.current.fitBounds(bounds);
+
+                                                                        // Añadir pines de interés (Iconos minimalistas)
+                                                                        interestPoints.forEach(ip => {
+                                                                            new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
+                                                                        });
+
+                                                                        // Añadir pin de DESTINO (Burbuja verde)
+                                                                        new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
+
+                                                                        if (speak) {
+                                                                            speak({ type: "info", text: `Ruta trazada. Toca los íconos azules para ver qué hay en tu camino.`, title: "Destino: " + landmark.name, icon: "🏁" });
+                                                                        }
                                                                     } else {
-                                                                        console.error("Route failed:", status);
                                                                         const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
                                                                         window.open(url, '_blank');
-                                                                        if (status === "REQUEST_DENIED") {
-                                                                            alert("¡Aviso! La 'Directions API' no está habilitada en tu clave de Google. He abierto la navegación en una nueva pestaña.");
-                                                                        }
                                                                     }
                                                                 }
                                                             );
@@ -204,6 +354,15 @@ export function Panel() {
                                                         onClick={() => {
                                                             setCurrentImageIdx(0);
                                                             setExpandedLandmark(landmark.name);
+                                                            
+                                                            if (speak) {
+                                                                const prompt = `El turista acaba de seleccionar el lugar histórico: ${landmark.name}. Cuéntale un dato histórico o arquitectónico súper fascinante y poco conocido de este lugar, como si fuera una gran anécdota.`;
+                                                                fetchNarration(prompt, "monument", "es").then(text => {
+                                                                    if (text) {
+                                                                        speak({ type: "monument", text, title: landmark.name, icon: "🏛️" });
+                                                                    }
+                                                                }).catch(() => null);
+                                                            }
                                                         }}
                                                         className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-[11px] font-bold hover:bg-zinc-200 transition-all active:scale-95"
                                                     >
@@ -476,57 +635,6 @@ export function Panel() {
                             </div>
                         </div>
 
-                        {/* Current narration banner */}
-                        <AnimatePresence initial={false}>
-                            {currentNarration && (
-                                <motion.div
-                                    key={currentNarration.id}
-                                    className="mx-4 mt-3 shrink-0"
-                                    initial={{ opacity: 0, y: -8 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -8 }}
-                                    transition={{ duration: 0.2 }}
-                                >
-                                    <div
-                                        className="rounded-xl px-4 py-3 border"
-                                        style={{
-                                            background: currentNarration.type === "danger"
-                                                ? "rgba(239,68,68,0.06)" : "rgba(59,130,246,0.06)",
-                                            borderColor: currentNarration.type === "danger"
-                                                ? "rgba(239,68,68,0.2)" : "rgba(59,130,246,0.15)",
-                                        }}
-                                    >
-                                        <div className="flex items-center gap-2 mb-1">
-                                            {currentNarration.type === "danger" ? (
-                                                <ShieldAlert className="w-4 h-4 text-red-600" />
-                                            ) : currentNarration.type === "welcome" ? (
-                                                <Flower className="w-4 h-4 text-blue-600" />
-                                            ) : (
-                                                <Mic className="w-4 h-4 text-blue-600" />
-                                            )}
-                                            <p className="text-[11px] font-bold uppercase tracking-[0.07em]"
-                                                style={{ color: currentNarration.type === "danger" ? "#dc2626" : "#2563eb" }}>
-                                                {narratorSpeaking ? "Hablando ahora" : "Último mensaje"}
-                                            </p>
-                                            {narratorSpeaking && (
-                                                <div className="flex items-center gap-0.5 ml-auto">
-                                                    {[3, 5, 4, 6, 3].map((h, i) => (
-                                                        <div key={i} className="w-0.5 rounded-full"
-                                                            style={{
-                                                                height: `${h}px`,
-                                                                background: currentNarration.type === "danger" ? "#ef4444" : "#3b82f6",
-                                                                animation: `pulse-bar ${0.4 + i * 0.1}s ease-in-out infinite alternate`,
-                                                            }} />
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <p className="text-[12px] text-zinc-700 leading-relaxed">{currentNarration.text}</p>
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-
                         {/* Experience log / Events */}
                         <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
                             <div className="mb-6">
@@ -573,40 +681,6 @@ export function Panel() {
                                     ))}
                                 </div>
                             </div>
-
-                            {experienceLog.length > 0 && (
-                                <div className="flex flex-col gap-1 border-t border-black/5 pt-4">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2">Recorrido reciente</p>
-                                    {experienceLog.map((item, idx) => (
-                                        <motion.div
-                                            key={item.id}
-                                            initial={{ opacity: 0, y: 6 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            transition={{ delay: idx * 0.03, duration: 0.16 }}
-                                            className={`flex items-start gap-3 px-3 py-2.5 rounded-xl border ${item.type === "danger"
-                                                ? "bg-red-50/60 border-red-100"
-                                                : "bg-zinc-50 border-zinc-100"
-                                                }`}
-                                        >
-                                            <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
-                                                style={{
-                                                    background: item.type === "danger" ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.07)",
-                                                    border: item.type === "danger" ? "1px solid rgba(239,68,68,0.15)" : "1px solid rgba(59,130,246,0.1)",
-                                                }}>
-                                                {item.type === "danger" ? (
-                                                    <AlertTriangle className="w-4 h-4 text-red-500" />
-                                                ) : (
-                                                    <History className="w-4 h-4 text-blue-500" />
-                                                )}
-                                            </div>
-                                            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                                                <p className="text-[12px] font-semibold text-zinc-800 truncate">{item.title ?? item.type}</p>
-                                                <p className="text-[10px] text-zinc-500 leading-relaxed line-clamp-2">{item.text}</p>
-                                            </div>
-                                        </motion.div>
-                                    ))}
-                                </div>
-                            )}
                         </div>
                     </motion.div>
                 )}

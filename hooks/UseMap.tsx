@@ -11,6 +11,7 @@ import {
 } from "react";
 import Webcam from "react-webcam";
 import { useVoiceNarrator, fetchNarration } from "../components/providers/VoiceNarrator";
+import { useExperience } from "../components/providers/ExperienceProvider";
 import { MAP_STYLES, PIN_SVG } from "@/components/map/data";
 import {
     CALI_BOUNDS,
@@ -39,8 +40,10 @@ import {
     type ArZoomLevel,
     type MapContextType,
     type NarrationEvent,
-    RiskLevel
+    RiskLevel,
+    VerbosityLevel
 } from "@/components/map/types";
+
 
 const COMUNA_RISK_MAP: Record<number, { risk: any; description: string }> = {
     1: { risk: "high", description: "Zona occidental, ladera. Precaución en zonas altas." },
@@ -148,6 +151,7 @@ export function UseHome() {
     const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(0.05);
     const [arZoomSupported, setArZoomSupported] = useState(false);
     const [voiceMuted, setVoiceMuted] = useState(false);
+    const [verbosity, setVerbosity] = useState<VerbosityLevel>("normal");
     const [showZoneAlert, setShowZoneAlert] = useState(true);
     const [experienceMode, setExperienceMode] = useState<"map" | "ar">("map");
 
@@ -168,6 +172,7 @@ export function UseHome() {
     const lastZoneId = useRef<number | null>(null);
     const spokenLandmarks = useRef<Set<string>>(new Set());
     const lastDangerNarration = useRef<number>(0);
+    const lastZoneFactNarration = useRef<number>(Date.now()); // Empezar con el tiempo actual para que no hable el dato apenas entra (choca con la bienvenida)
     const lastNarratedPos = useRef<{ lat: number; lng: number } | null>(null);
     const dragStartY = useRef<number>(0);
     const drawerStartH = useRef<number>(0);
@@ -176,18 +181,20 @@ export function UseHome() {
     const hasWelcomed = useRef(false);
 
     // ── 3. CUSTOM HOOKS ──
-    const { 
-        isSpeaking: narratorSpeaking, 
-        currentNarration, 
-        experienceLog, 
-        speak, 
-        unlockSpeech, 
-        speechUnlocked, 
-        voicePreference, 
-        selectedVoiceId, 
-        availableVoices, 
-        setVoice 
-    } = useVoiceNarrator({ muted: voiceMuted });
+    const { language } = useExperience();
+    const {
+        isSpeaking: narratorSpeaking,
+        currentNarration,
+        experienceLog,
+        speak,
+        unlockSpeech,
+        speechUnlocked,
+        voicePreference,
+        selectedVoiceId,
+        availableVoices,
+        setVoice,
+        previewVoice
+    } = useVoiceNarrator({ muted: voiceMuted, language });
 
     const speakRef = useRef(speak);
     useEffect(() => { speakRef.current = speak; }, [speak]);
@@ -330,45 +337,46 @@ export function UseHome() {
         lastFetchPos.current = { lat, lng };
         setLoadingPlaces(true);
 
-        const service = new google.maps.places.PlacesService(mapInstance.current);
-        const accumulatedPlaces: NearbyPlace[] = [];
+        try {
+            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
 
-        const handleResults = (
-            results: google.maps.places.PlaceResult[] | null,
-            status: any,
-            pagination: google.maps.places.PlaceSearchPagination | null
-        ) => {
-            if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-                const mapped = results.map((p): NearbyPlace => ({
-                    place_id: p.place_id!,
-                    name: p.name!,
-                    vicinity: p.vicinity || "Dirección no disponible",
+            const request = {
+                fields: ["id", "displayName", "location", "types", "rating", "userRatingCount", "formattedAddress", "businessStatus"],
+                locationRestriction: {
+                    center: { lat, lng },
+                    radius: 1000,
+                },
+                maxResultCount: 20
+            };
+
+            const { places } = await Place.searchNearby(request);
+
+            if (places && places.length > 0) {
+                const mapped = places.map((p: any): NearbyPlace => ({
+                    place_id: p.id,
+                    name: p.displayName,
+                    vicinity: p.formattedAddress || "Dirección no disponible",
                     rating: p.rating,
-                    user_ratings_total: p.user_ratings_total,
+                    user_ratings_total: p.userRatingCount,
                     types: p.types || [],
-                    geometry: { location: p.geometry!.location! },
-                    business_status: p.business_status as any,
+                    geometry: { location: p.location },
+                    business_status: p.businessStatus as any,
                 }));
 
-                accumulatedPlaces.push(...mapped);
-
-                if (pagination?.hasNextPage) {
-                    setTimeout(() => pagination.nextPage(), 2000);
-                } else {
-                    const sorted = accumulatedPlaces.sort((a, b) => {
-                        const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
-                        const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
-                        return da - db;
-                    });
-                    setPlaces(sorted);
-                    setLoadingPlaces(false);
-                }
+                const sorted = mapped.sort((a, b) => {
+                    const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
+                    const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
+                    return da - db;
+                });
+                setPlaces(sorted);
             } else {
-                setLoadingPlaces(false);
+                setPlaces([]);
             }
-        };
-
-        service.nearbySearch({ location: { lat, lng }, radius: 1000 }, handleResults);
+        } catch (e) {
+            console.error("Place API search error:", e);
+        } finally {
+            setLoadingPlaces(false);
+        }
     }, []);
 
     const fetchLocalLandmarks = useCallback(async (lat: number, lng: number) => {
@@ -376,63 +384,63 @@ export function UseHome() {
         if (!isInsideCaliBounds(lat, lng)) return;
 
         setLoadingLandmarks(true);
-        const service = new google.maps.places.PlacesService(mapInstance.current);
-        const accumulatedLandmarks: Landmark[] = [];
+        try {
+            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
 
-        const handleResults = (
-            results: google.maps.places.PlaceResult[] | null,
-            status: any,
-            pagination: google.maps.places.PlaceSearchPagination | null
-        ) => {
-            if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-                (async () => {
-                    const newLandmarks: Landmark[] = await Promise.all(results.map(async (p): Promise<Landmark> => {
-                        const name = p.name ?? "Lugar Histórico";
-                        const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
+            const request = {
+                fields: ["id", "displayName", "location", "types"],
+                includedTypes: ["tourist_attraction", "museum", "church", "historical_landmark"],
+                locationRestriction: {
+                    center: { lat, lng },
+                    radius: 1000,
+                },
+                maxResultCount: 15
+            };
 
-                        let history = "";
-                        let images: string[] = [];
+            const { places } = await Place.searchNearby(request);
 
-                        const wikiData = await fetchWikipediaSummary(name);
-                        if (wikiData) {
-                            history = wikiData.extract;
-                            images = wikiData.images;
-                        }
+            if (places && places.length > 0) {
+                const newLandmarks: Landmark[] = await Promise.all(places.map(async (p: any): Promise<Landmark> => {
+                    const name = p.displayName ?? "Lugar Histórico";
+                    const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
 
-                        if (!history) {
-                            history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
-                        }
+                    let history = "";
+                    let images: string[] = [];
 
-                        return {
-                            name,
-                            lat: p.geometry!.location!.lat(),
-                            lng: p.geometry!.location!.lng(),
-                            type: "monument",
-                            icon: "",
-                            description: typeLabel,
-                            history: history.length > 500 ? history.substring(0, 497) + "..." : history,
-                            radiusM: 200,
-                            place_id: p.place_id!,
-                            images,
-                            prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
-                        };
-                    }));
-
-                    accumulatedLandmarks.push(...newLandmarks);
-
-                    if (pagination?.hasNextPage) {
-                        setTimeout(() => pagination.nextPage(), 2000);
-                    } else {
-                        setLocalLandmarks(accumulatedLandmarks);
-                        setLoadingLandmarks(false);
+                    const wikiData = await fetchWikipediaSummary(name);
+                    if (wikiData) {
+                        history = wikiData.extract;
+                        images = wikiData.images;
                     }
-                })();
-            } else {
-                setLoadingLandmarks(false);
-            }
-        };
 
-        service.nearbySearch({ location: { lat, lng }, radius: 1000, type: 'tourist_attraction' }, handleResults);
+                    if (!history) {
+                        history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
+                    }
+
+                    return {
+                        name,
+                        lat: p.location!.lat(),
+                        lng: p.location!.lng(),
+                        type: "monument",
+                        icon: "",
+                        description: typeLabel,
+                        history: history.length > 500 ? history.substring(0, 497) + "..." : history,
+                        radiusM: 200,
+                        place_id: p.id,
+                        images,
+                        prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
+                    };
+                }));
+
+                setLocalLandmarks(newLandmarks);
+            } else {
+                setLocalLandmarks([]);
+            }
+        } catch (e) {
+            console.error("Place API landmarks error:", e);
+        } finally {
+            setLoadingLandmarks(false);
+        }
     }, [currentComuna]);
 
     const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
@@ -454,7 +462,7 @@ export function UseHome() {
         setArZoomSupported(true);
         const requestedZoom = Math.min(Math.max(zoomLevel, minZoom), maxZoom);
         track.applyConstraints({ advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet] })
-             .catch(() => setArZoomSupported(false));
+            .catch(() => setArZoomSupported(false));
     }, []);
 
     const swapCameraZoom = useCallback(() => {
@@ -742,13 +750,31 @@ export function UseHome() {
     useEffect(() => {
         if (!coords || voiceMuted) return;
         const { lat, lng } = coords;
-        if (!hasWelcomed.current) {
+
+        // ── Bienvenida Inteligente por Zona (Memoria de sesión) ──
+        if (!hasWelcomed.current && localLandmarks.length > 0 && !loadingLandmarks) {
             hasWelcomed.current = true;
-            const fallbackWelcome = "Bienvenido a Cali, la sucursal del cielo. Voy a acompañarte por la ciudad, parce.";
-            speakRef.current({ type: "welcome", text: fallbackWelcome, title: "Bienvenida a Cali", icon: "🌺" });
-            fetchNarration("El visitante acaba de activar CaliGuía y está explorando Cali.", "welcome").then(text => {
-                if (text && text !== fallbackWelcome) speakRef.current({ type: "welcome", text, title: "Cali te espera", icon: "🌺" });
-            }).catch(() => null);
+
+            const lastSessionLat = sessionStorage.getItem("caliguia_last_welcome_lat");
+            const lastSessionLng = sessionStorage.getItem("caliguia_last_welcome_lng");
+
+            let skipWelcome = false;
+            if (lastSessionLat && lastSessionLng) {
+                const dist = haversineDistance(lat, lng, parseFloat(lastSessionLat), parseFloat(lastSessionLng));
+                if (dist < 500) skipWelcome = true; // Si recarga a menos de 500m del último saludo, no repite
+            }
+
+            if (!skipWelcome) {
+                sessionStorage.setItem("caliguia_last_welcome_lat", lat.toString());
+                sessionStorage.setItem("caliguia_last_welcome_lng", lng.toString());
+
+                const nearbyNames = localLandmarks.slice(0, 3).map(l => l.name).join(", ");
+                const prompt = `El turista acaba de abrir la app y se encuentra en Cali. Está muy cerca de: ${nearbyNames || "lugares icónicos"}. Dale una bienvenida muy cálida y suelta un dato MUY curioso o atractivo sobre esta zona específica para motivarlo a explorar. Máximo 40 palabras.`;
+
+                fetchNarration(prompt, "welcome", language).then(text => {
+                    if (text) speakRef.current({ type: "welcome", text, title: "Explorando Cali", icon: "🌺" });
+                }).catch(() => null);
+            }
         }
         const movedEnough = !lastNarratedPos.current || haversineDistance(lastNarratedPos.current.lat, lastNarratedPos.current.lng, lat, lng) > 80;
         if (!movedEnough) return;
@@ -762,10 +788,24 @@ export function UseHome() {
                     lastDangerNarration.current = now;
                     const fallbackDanger = `Ojo, parce. Estás entrando a ${dangerComuna.name}. Mantente atento y por favor cuídate.`;
                     speakRef.current({ type: "danger", text: fallbackDanger, title: `⚠️ ${dangerComuna.name}`, icon: "⚠️" });
-                    fetchNarration(`El usuario está ingresando a ${dangerComuna.name}. ${dangerComuna.description}`, "danger").then(text => {
+                    fetchNarration(`El usuario está ingresando a ${dangerComuna.name}. ${dangerComuna.description}`, "danger", language).then(text => {
                         if (text) speakRef.current({ type: "danger", text, title: `⚠️ ${dangerComuna.name}`, icon: "⚠️" });
                     }).catch(() => null);
                 }
+            }
+        }
+
+        // ── Datos Curiosos y Planes por Zona (Latido Geográfico ajustado por Verbosidad) ──
+        if (!voiceMuted && currentComuna && currentComuna.risk !== "high") {
+            const now = Date.now();
+            const intervalMs = verbosity === "mucho" ? 2 * 60 * 1000 : verbosity === "poco" ? 8 * 60 * 1000 : 4 * 60 * 1000;
+
+            if (now - lastZoneFactNarration.current > intervalMs) {
+                lastZoneFactNarration.current = now;
+                const promptFact = `El usuario se encuentra paseando por ${currentComuna.name}. Cuéntale un dato cultural muy curioso, histórico corto o recomiéndale un "parche" (plan/evento típico) cerca de esta zona. Máximo 40 palabras, tono caleño amigable.`;
+                fetchNarration(promptFact, "info", language).then(text => {
+                    if (text) speakRef.current({ type: "info", text, title: `💡 ${currentComuna.name}`, icon: "💡" });
+                }).catch(() => null);
             }
         }
 
@@ -774,13 +814,13 @@ export function UseHome() {
             if (spokenLandmarks.current.has(landmark.name)) continue;
             if (haversineDistance(lat, lng, landmark.lat, landmark.lng) <= landmark.radiusM) {
                 spokenLandmarks.current.add(landmark.name);
-                fetchNarration(landmark.prompt, "monument").then(text => {
+                fetchNarration(landmark.prompt, "monument", language).then(text => {
                     if (text) speakRef.current({ type: "monument", text, title: landmark.name, icon: landmark.icon });
                 }).catch(() => null);
                 break;
             }
         }
-    }, [coords, voiceMuted, comunas, localLandmarks]);
+    }, [coords, voiceMuted, comunas, localLandmarks, currentComuna, language, loadingLandmarks]);
 
     // ── 6. RENDER HELPERS ──
     const getDrawerBounds = () => ({ min: 92, middle: 340, max: window.innerHeight - 130 });
@@ -804,8 +844,16 @@ export function UseHome() {
         experienceMode, setExperienceMode,
         webcamRef, mapRef, mapInstance, routePolylineRef,
         requestLocation, swapCameraZoom, applyCameraZoom, onDrawerPointerDown, onDrawerPointerMove, onDrawerPointerEnd,
+        toggle3D: () => {
+            if (mapInstance.current) {
+                const currentTilt = mapInstance.current.getTilt();
+                mapInstance.current.setTilt(currentTilt === 45 ? 0 : 45);
+            }
+        },
         narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, aiContext, selectComuna,
-        selectedVoiceId, availableVoices, setVoice
+        selectedVoiceId, availableVoices, setVoice, verbosity, setVerbosity,
+        previewVoice,
+        speak
     };
 }
 

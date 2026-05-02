@@ -3,6 +3,7 @@ export type LayerMode = "risk" | "heatmap" | "none";
 export type ActiveTab = "local" | "places" | "zones" | "experience";
 export type RiskLevel = "low" | "medium" | "high" | "safe";
 export type ArZoomLevel = 1 | 10 | 0.05;
+export type VerbosityLevel = "mucho" | "normal" | "poco";
 
 export interface ComunaData {
     id: number;
@@ -106,6 +107,11 @@ export interface MapContextType {
     selectedVoiceId: string;
     availableVoices: any[];
     setVoice: (id: string) => void;
+    previewVoice: (id: string) => void;
+    speak: (event: Omit<NarrationEvent, "id">) => void;
+    verbosity: VerbosityLevel;
+    setVerbosity: (v: VerbosityLevel) => void;
+    toggle3D: () => void;
 }
 
 export interface CaliEvent {
