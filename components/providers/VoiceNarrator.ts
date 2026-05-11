@@ -204,6 +204,25 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     utteranceRef.current = null;
   }, []);
 
+  // Fallback: speak using the browser's Web Speech API silently
+  const speakWithBrowserFallback = useCallback((text: string, onEnd: () => void) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) { onEnd(); return; }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const voice = availableVoicesRef.current.find(v => v.id === selectedVoiceIdRef.current);
+    if (voice) {
+      u.voice = voice.systemVoice;
+      u.lang = voice.lang;
+    } else {
+      u.lang = languageRef.current === "es" ? "es-CO" : languageRef.current === "pt" ? "pt-BR" : "en-US";
+    }
+    u.rate = 0.92;
+    u.onend = onEnd;
+    u.onerror = onEnd;
+    utteranceRef.current = u;
+    window.speechSynthesis.speak(u);
+  }, []);
+
   const playNext = useCallback(() => {
     if (muted || !queueRef.current.length || isPlayingRef.current) return;
     if (!unlockedRef.current) return;
@@ -257,22 +276,18 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
             URL.revokeObjectURL(audioUrlRef.current);
             audioUrlRef.current = null;
           }
-          window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
-            detail: { reason: "voice-playback-failed", narration: event },
-          }));
-          finishAndContinue();
+          // Gradio audio failed to play — fall back to browser TTS silently
+          speakWithBrowserFallback(event.text, finishAndContinue);
         };
         return audio.play();
       })
       .catch(() => {
         if (!isPlayingRef.current) return;
-        setGradioVoiceReady(false);
-        window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
-          detail: { reason: "voice-speech-failed", narration: event },
-        }));
-        finishAndContinue();
+        // Gradio Space is unavailable — fall back to browser TTS without
+        // touching gradioVoiceReady so the user is NOT asked to re-record.
+        speakWithBrowserFallback(event.text, finishAndContinue);
       });
-  }, [muted, gradioVoiceReady]); // Uses refs for browser voices/selectedId/language
+  }, [muted, gradioVoiceReady, speakWithBrowserFallback]); // Uses refs for browser voices/selectedId/language
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
