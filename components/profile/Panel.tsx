@@ -71,7 +71,6 @@ export function Panel() {
         setCurrentComuna,
         selectComuna,
         speak,
-        voiceReady
     } = useMap();
 
     useEffect(() => {
@@ -367,12 +366,6 @@ export function Panel() {
                                                             setExpandedLandmark(landmark.name);
                                                             
                                                             if (speak) {
-                                                                if (!voiceReady) {
-                                                                    window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
-                                                                        detail: { reason: "expand-landmark", landmark: landmark.name },
-                                                                    }));
-                                                                    return;
-                                                                }
                                                                 const prompt = `El turista acaba de seleccionar el lugar histórico: ${landmark.name}. Cuéntale un dato histórico o arquitectónico súper fascinante y poco conocido de este lugar, como si fuera una gran anécdota.`;
                                                                 fetchNarration(prompt, "monument", language).then(text => {
                                                                     if (text) {
