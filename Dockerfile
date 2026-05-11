@@ -16,6 +16,9 @@ COPY . .
 # ARG NEXT_PUBLIC_API_URL
 # ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# Generate Prisma Client before building (required for standalone output)
+RUN npx prisma generate
+
 RUN npm run build
 
 # Stage 3: Production runner
@@ -39,6 +42,12 @@ RUN chown nextjs:nodejs .next
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Copy Prisma engine binaries and schema — required when using standalone output.
+# Next.js standalone does NOT auto-include these, so Prisma fails at runtime without them.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
 USER nextjs
 
