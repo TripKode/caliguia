@@ -28,16 +28,37 @@ export function getCategoryIcon(types: string[]): React.ReactNode {
     return <MapPin className="w-4 h-4 text-blue-500" />;
 }
 
-export function getCategoryLabel(types: string[]): string {
-    const map: Record<string, string> = {
-        restaurant: "Restaurant", cafe: "Café", bar: "Bar", bakery: "Bakery",
-        supermarket: "Supermercado", grocery_or_supermarket: "Tienda",
-        pharmacy: "Farmacia", hospital: "Hospital", gym: "Gym",
-        bank: "Banco", atm: "ATM", gas_station: "Gasolinera",
-        school: "Colegio", park: "Parque", lodging: "Hotel",
-        clothing_store: "Ropa", shopping_mall: "Centro Com.", store: "Tienda",
-        beauty_salon: "Salón", hair_care: "Peluquería", spa: "Spa",
+export function getCategoryLabel(types: string[], language: "es" | "en" | "pt" = "es"): string {
+    const map: Record<string, Record<"es" | "en" | "pt", string>> = {
+        restaurant: { es: "Restaurante", en: "Restaurant", pt: "Restaurante" },
+        cafe: { es: "Café", en: "Cafe", pt: "Café" },
+        bar: { es: "Bar", en: "Bar", pt: "Bar" },
+        bakery: { es: "Panadería", en: "Bakery", pt: "Padaria" },
+        supermarket: { es: "Supermercado", en: "Supermarket", pt: "Supermercado" },
+        grocery_or_supermarket: { es: "Tienda", en: "Grocery", pt: "Mercado" },
+        convenience_store: { es: "Tienda", en: "Convenience", pt: "Loja" },
+        pharmacy: { es: "Farmacia", en: "Pharmacy", pt: "Farmácia" },
+        hospital: { es: "Hospital", en: "Hospital", pt: "Hospital" },
+        doctor: { es: "Médico", en: "Doctor", pt: "Médico" },
+        gym: { es: "Gimnasio", en: "Gym", pt: "Academia" },
+        bank: { es: "Banco", en: "Bank", pt: "Banco" },
+        atm: { es: "Cajero", en: "ATM", pt: "Caixa" },
+        gas_station: { es: "Gasolinera", en: "Gas Station", pt: "Posto" },
+        school: { es: "Colegio", en: "School", pt: "Escola" },
+        university: { es: "Universidad", en: "University", pt: "Universidade" },
+        library: { es: "Biblioteca", en: "Library", pt: "Biblioteca" },
+        park: { es: "Parque", en: "Park", pt: "Parque" },
+        lodging: { es: "Hotel", en: "Hotel", pt: "Hotel" },
+        hotel: { es: "Hotel", en: "Hotel", pt: "Hotel" },
+        clothing_store: { es: "Ropa", en: "Clothing", pt: "Roupas" },
+        shopping_mall: { es: "Centro Com.", en: "Mall", pt: "Shopping" },
+        store: { es: "Tienda", en: "Store", pt: "Loja" },
+        beauty_salon: { es: "Salón", en: "Salon", pt: "Salão" },
+        hair_care: { es: "Peluquería", en: "Hair Care", pt: "Cabeleireiro" },
+        spa: { es: "Spa", en: "Spa", pt: "Spa" },
+        tourist_attraction: { es: "Atracción", en: "Attraction", pt: "Atração" },
+        museum: { es: "Museo", en: "Museum", pt: "Museu" },
     };
-    for (const t of types) if (map[t]) return map[t];
-    return "Negocio";
+    for (const t of types) if (map[t]) return map[t][language];
+    return { es: "Negocio", en: "Business", pt: "Negócio" }[language];
 }

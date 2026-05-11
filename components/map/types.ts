@@ -102,6 +102,7 @@ export interface MapContextType {
     unlockSpeech: (granted: boolean) => void;
     speechUnlocked: boolean;
     voicePreference: string;
+    voiceReady: boolean;
     aiContext: string;
     selectComuna: (comuna: ComunaData) => void;
     selectedVoiceId: string;

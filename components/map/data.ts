@@ -33,6 +33,13 @@ export const RISK_CONFIG: Record<RiskLevel, { fill: string; stroke: string; fill
   high: { fill: "#ef4444", stroke: "#dc2626", fillOpacity: 0.18, label: "Alta", color: "#dc2626" },
 };
 
+export const RISK_LABELS: Record<RiskLevel, Record<"es" | "en" | "pt", string>> = {
+  safe: { es: "Segura", en: "Safe", pt: "Segura" },
+  low: { es: "Baja", en: "Low", pt: "Baixa" },
+  medium: { es: "Moderada", en: "Moderate", pt: "Moderada" },
+  high: { es: "Alta", en: "High", pt: "Alta" },
+};
+
 const COMUNA_RISK_MAP: Record<number, { risk: "safe" | "medium" | "high" | "low"; description: string }> = {
   1: { risk: "high", description: "Zona occidental, ladera. Precaución en zonas altas." },
   2: { risk: "safe", description: "Zona norte, residencial y gastronómica de alto nivel." },

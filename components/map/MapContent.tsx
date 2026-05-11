@@ -1,7 +1,9 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useSession } from "next-auth/react";
+import { useTranslations } from "next-intl";
 import Webcam from "react-webcam";
 import { AIFloatingIsland } from "@/components/island/Island";
 import { useMap } from "@/hooks/UseMap";
@@ -11,7 +13,70 @@ import { useARVision } from "@/hooks/useARVision";
 import { useExperience } from "@/components/providers/ExperienceProvider";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
 
+const TOUR_START_MESSAGES = {
+    es: [
+        {
+            title: "Hola, Cali te estaba esperando",
+            body: "Tu guía con IA ya preparó una primera lectura del entorno. Toca para abrir el recorrido y escuchar qué vale la pena mirar cerca de ti.",
+            kicker: "IA lista para narrar",
+        },
+        {
+            title: "Qué bueno verte por aquí",
+            body: "CaliGuía está despierta y lista para convertir tu ubicación en una historia caminable, breve y hecha para este momento.",
+            kicker: "Recorrido inteligente",
+        },
+        {
+            title: "Volvamos a explorar Cali",
+            body: "Tu guía virtual ajustará la narración al lugar donde estás y al ritmo del recorrido. Un toque y arrancamos.",
+            kicker: "Guía activa",
+        },
+    ],
+    en: [
+        {
+            title: "Cali is ready when you are",
+            body: "Your AI guide has a first read of the area. Tap to start the tour and hear what is worth noticing nearby.",
+            kicker: "AI ready to narrate",
+        },
+        {
+            title: "Good to see you again",
+            body: "CaliGuía is awake and ready to turn your location into a short, walkable story for this moment.",
+            kicker: "Smart route",
+        },
+        {
+            title: "Let’s explore Cali again",
+            body: "Your virtual guide will adapt the narration to where you are and the pace of your route. One tap and we go.",
+            kicker: "Guide active",
+        },
+    ],
+    pt: [
+        {
+            title: "Cali estava esperando por você",
+            body: "Seu guia com IA já fez uma primeira leitura do entorno. Toque para iniciar o passeio e ouvir o que vale observar por perto.",
+            kicker: "IA pronta para narrar",
+        },
+        {
+            title: "Que bom ver você por aqui",
+            body: "CaliGuía está acordada e pronta para transformar sua localização em uma história breve para caminhar agora.",
+            kicker: "Roteiro inteligente",
+        },
+        {
+            title: "Vamos explorar Cali de novo",
+            body: "Seu guia virtual ajustará a narração ao lugar onde você está e ao ritmo do passeio. Um toque e começamos.",
+            kicker: "Guia ativo",
+        },
+    ],
+} as const;
+
+function getDailyTourStartMessage(language: keyof typeof TOUR_START_MESSAGES) {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const daySeed = todayKey.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    const messages = TOUR_START_MESSAGES[language] ?? TOUR_START_MESSAGES.es;
+    return messages[daySeed % messages.length];
+}
+
 function MapContent() {
+    const t = useTranslations("Map");
+    const { status: authStatus } = useSession();
     const {
         experienceMode,
         webcamRef,
@@ -135,7 +200,9 @@ function MapContent() {
 
     const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
     const { language } = useExperience();
+    const tourStartMessage = useMemo(() => getDailyTourStartMessage(language), [language]);
     const [isARScanning, setIsARScanning] = useState(false);
+    const isAuthenticated = authStatus === "authenticated";
 
     useEffect(() => {
         if (experienceMode === "ar" && isReady) {
@@ -334,9 +401,9 @@ function MapContent() {
                         📍
                     </div>
                     <div>
-                        <p className="text-[16px] font-bold text-zinc-850">Activa tu ubicación</p>
+                        <p className="text-[16px] font-bold text-zinc-850">{t("enableLocationTitle")}</p>
                         <p className="mt-2 max-w-70 text-[13px] leading-relaxed text-zinc-500">
-                            CaliGuía usa tu posición para mostrar negocios cercanos y tu zona actual.
+                            {t("enableLocationBody")}
                         </p>
                     </div>
                     <button
@@ -347,7 +414,7 @@ function MapContent() {
                         disabled={status === "loading"}
                         className="touch-manipulation rounded-full bg-blue-500 px-5 py-3 text-[13px] font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-600 disabled:cursor-wait disabled:bg-blue-400"
                     >
-                        {status === "loading" ? "Solicitando permiso..." : "Usar mi ubicación"}
+                        {status === "loading" ? t("requestingPermission") : t("useMyLocation")}
                     </button>
                     {locationError && (
                         <p className="max-w-70 text-[12px] leading-relaxed text-red-500">
@@ -374,7 +441,7 @@ function MapContent() {
                         onTouchEnd={() => requestLocation()}
                         className="touch-manipulation rounded-full bg-blue-500 px-5 py-3 text-[13px] font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-600"
                     >
-                        Intentar de nuevo
+                        {t("tryAgain")}
                     </button>
                     {locationDebug && (
                         <p className="max-w-[320px] wrap-break-word rounded-xl bg-white/70 px-3 py-2 text-[10px] leading-relaxed text-zinc-500">
@@ -386,7 +453,7 @@ function MapContent() {
 
             {/* ── Immersive Splash Screen / Audio Unlocker ── */}
             <AnimatePresence>
-                {(!speechUnlocked && !voiceMuted) && (
+                {(isAuthenticated && !speechUnlocked && !voiceMuted) && (
                     <motion.div
                         className="absolute inset-0 z-100 flex flex-col items-center justify-center bg-black/40 backdrop-blur-md px-6"
                         initial={{ opacity: 0 }}
@@ -396,38 +463,67 @@ function MapContent() {
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0, y: 20 }}
                             animate={{ scale: 1, opacity: 1, y: 0 }}
-                            className="w-full max-w-sm bg-white/95 rounded-[32px] p-8 shadow-2xl text-center border border-white/50 relative overflow-hidden"
+                            className="w-full max-w-sm overflow-hidden rounded-[28px] border border-white/70 bg-white/96 text-center shadow-2xl"
                         >
-                            {/* Decorative background glow */}
-                            <div className="absolute -top-20 -left-20 w-40 h-40 bg-blue-400/20 rounded-full blur-3xl" />
-                            <div className="absolute -bottom-20 -right-20 w-40 h-40 bg-purple-400/20 rounded-full blur-3xl" />
+                            <div className="border-b border-zinc-100 bg-zinc-50/80 px-5 py-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2 text-left">
+                                        <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.16)]" />
+                                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                                            {voicePreference === "unknown" ? t("meetGuide") : tourStartMessage.kicker}
+                                        </span>
+                                    </div>
+                                    <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-600">
+                                        CaliGuía
+                                    </span>
+                                </div>
+                            </div>
 
-                            <div className="relative">
-                                <div className="w-20 h-20 bg-linear-to-tr from-blue-500 to-blue-400 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-500/30 border border-blue-400/50">
-                                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                        <line x1="8" y1="22" x2="16" y2="22" />
+                            <div className="px-7 pb-7 pt-6">
+                                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-blue-600 shadow-lg shadow-blue-500/10">
+                                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 3v3" />
+                                        <path d="M5 8h14" />
+                                        <rect x="5" y="6" width="14" height="12" rx="4" />
+                                        <circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none" />
+                                        <circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none" />
+                                        <path d="M9.5 15c1.4.9 3.6.9 5 0" />
                                     </svg>
                                 </div>
 
                                 <h2 className="text-2xl font-black text-zinc-800 mb-2 tracking-tight">
-                                    {voicePreference === "unknown" ? "Conoce a CaliGuía" : "¡Hola de nuevo!"}
+                                    {voicePreference === "unknown" ? t("meetGuide") : tourStartMessage.title}
                                 </h2>
 
-                                <p className="text-[14px] text-zinc-500 font-medium leading-relaxed mb-8">
+                                <p className="mx-auto mb-6 max-w-72 text-[14px] font-medium leading-relaxed text-zinc-500">
                                     {voicePreference === "unknown"
-                                        ? "Déjate llevar. Activa el audio para escuchar datos curiosos y la historia de los lugares que vas descubriendo por Cali."
-                                        : "Toca para iniciar el recorrido y despertar a tu guía virtual."}
+                                        ? t("meetGuideBody")
+                                        : tourStartMessage.body}
                                 </p>
+
+                                {voicePreference !== "unknown" && (
+                                    <div className="mb-6 grid grid-cols-3 gap-2 text-left">
+                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
+                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">Mapa</p>
+                                            <p className="mt-0.5 text-[12px] font-black text-zinc-700">Activo</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
+                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">Voz</p>
+                                            <p className="mt-0.5 text-[12px] font-black text-zinc-700">Lista</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
+                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">IA</p>
+                                            <p className="mt-0.5 text-[12px] font-black text-blue-600">Online</p>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div className="flex flex-col gap-3">
                                     <button
                                         onClick={() => unlockSpeech(true)}
-                                        className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold text-[16px] shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 hover:bg-blue-700"
+                                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 text-[15px] font-black text-white shadow-lg shadow-blue-500/25 transition-all hover:bg-blue-700 active:scale-[0.98]"
                                     >
-                                        {voicePreference === "unknown" ? "Activar Guía de Voz" : "Empezar Recorrido"}
+                                        {voicePreference === "unknown" ? t("activateVoiceGuide") : t("startTour")}
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                                     </button>
 
@@ -439,7 +535,7 @@ function MapContent() {
                                             }}
                                             className="w-full py-3 text-zinc-400 font-semibold text-[14px] hover:text-zinc-600 active:scale-[0.98] transition-all"
                                         >
-                                            No, explorar en silencio
+                                            {t("silentExplore")}
                                         </button>
                                     )}
                                 </div>
@@ -498,7 +594,7 @@ function MapContent() {
                                                         <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />
 
                                                         <div className="absolute bottom-6 left-6 right-6 text-white">
-                                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-1 block">Patrimonio de Cali</span>
+                                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-1 block">{t("caliHeritage")}</span>
                                                             <h2 className="text-2xl font-black leading-tight">{landmark.name}</h2>
                                                         </div>
                                                     </div>
@@ -532,7 +628,7 @@ function MapContent() {
                                                 <div className="flex flex-col gap-3">
                                                     <div className="flex items-center gap-2">
                                                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                                                        <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">Escuchando a CaliGuía</p>
+                                                        <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">{t("listening")}</p>
                                                     </div>
 
                                                     <div className="min-h-[60px] flex flex-col justify-center">
@@ -544,7 +640,7 @@ function MapContent() {
                                                                 exit={{ opacity: 0, y: -10 }}
                                                                 className="text-[15px] text-zinc-800 font-medium leading-relaxed italic"
                                                             >
-                                                                {currentNarration?.text || "Toca 'Expandir' para que te cuente un secreto sobre este lugar..."}
+                                                                {currentNarration?.text || t("expandHint")}
                                                             </motion.p>
                                                         </AnimatePresence>
                                                     </div>
@@ -794,7 +890,7 @@ function MapContent() {
                                                                             speak({
                                                                                 type: "info",
                                                                                 text: `He trazado una ruta especial para ti pasando por ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' y ') : 'los puntos más bonitos de la ciudad'}. ¡Disfruta el camino!`,
-                                                                                title: "Ruta Personalizada",
+                                                                                title: t("customRoute"),
                                                                                 icon: "✨"
                                                                             });
                                                                         }
@@ -808,7 +904,7 @@ function MapContent() {
                                                         className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-zinc-900 text-white font-bold text-[15px] shadow-lg active:scale-[0.98] transition-transform"
                                                     >
                                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 18V5l12-2v13l-12 2zm-3.5 3c.828 0 1.5-.672 1.5-1.5s-.672-1.5-1.5-1.5-1.5.672-1.5 1.5.672 1.5 1.5 1.5z" /></svg>
-                                                        Trazar Ruta Personalizada
+                                                        {t("drawCustomRoute")}
                                                     </button>
                                                 </div>
                                             </div>

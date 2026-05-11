@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum VoiceProvider {
+  GRADIO_OPENVOICE
+}
+
+enum VoiceCloneStatus {
+  READY
+  REQUIRES_VERIFICATION
+  FAILED
+}
+
+model User {
+  id                    String       @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Auth.js / app identity
+  externalId            String?      @unique
+  email                 String?      @unique
+  emailVerified         DateTime?
+  passwordHash          String?
+  name                  String?
+  displayName           String?
+  image                 String?
+  role                  String       @default("USER")
+  permissions           String[]
+  preferredLanguage     String       @default("es")
+  languageConfigured    Boolean      @default(false)
+
+  // OAuth/session relations
+  accounts              Account[]
+  sessions              Session[]
+
+  // CaliGuia voice profile
+  activeVoiceProvider   VoiceProvider?
+  activeProviderVoiceId String?
+  voiceClones           VoiceClone[]
+
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model VoiceClone {
+  id                   String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId               String           @db.ObjectId
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider             VoiceProvider    @default(GRADIO_OPENVOICE)
+  providerVoiceId      String           @unique
+  providerVoiceName    String
+  status               VoiceCloneStatus @default(READY)
+  sourceFileName       String?
+  sourceMimeType       String?
+  sourceSizeBytes      Int?
+  requiresVerification Boolean          @default(false)
+  metadata             Json?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([provider, providerVoiceId])
+}

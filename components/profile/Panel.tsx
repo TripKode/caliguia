@@ -28,16 +28,22 @@ import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
     CALI_EVENTS_TODAY,
     RISK_CONFIG,
+    RISK_LABELS,
 } from "@/components/map/data";
 import { useMap } from "@/hooks/UseMap";
+import { useExperience } from "@/components/providers/ExperienceProvider";
+import { useTranslations } from "next-intl";
 import { haversineDistance, getComunaCentroid } from "@/components/map/handlers";
 import { type RiskLevel } from "@/components/map/types";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
 
 export function Panel() {
+    const t = useTranslations("Panel");
+    const { language } = useExperience();
     const [currentPage, setCurrentPage] = useState(1);
-    const [isPlacesExpanded, setIsPlacesExpanded] = useState(true);
-    const [isHotelsExpanded, setIsHotelsExpanded] = useState(true);
+    const [localPage, setLocalPage] = useState(1);
+    const [isPlacesExpanded, setIsPlacesExpanded] = useState(false);
+    const [isHotelsExpanded, setIsHotelsExpanded] = useState(false);
     const [hotels, setHotels] = useState<any[]>([]);
     const [loadingHotels, setLoadingHotels] = useState(false);
     const [hotelsPage, setHotelsPage] = useState(1);
@@ -64,12 +70,17 @@ export function Panel() {
         comunas: CALI_COMUNAS,
         setCurrentComuna,
         selectComuna,
-        speak
+        speak,
+        voiceReady
     } = useMap();
 
     useEffect(() => {
         setCurrentPage(1);
     }, [places]);
+
+    useEffect(() => {
+        setLocalPage(1);
+    }, [localLandmarks]);
 
     useEffect(() => {
         if (activeTab === "places" && hotels.length === 0 && !loadingHotels) {
@@ -99,7 +110,7 @@ export function Panel() {
                             }`}
                     >
                         <span className="truncate">
-                            {tab === "local" ? "Local" : tab === "places" ? "Negocios" : tab === "zones" ? "Zonas" : "Agenda"}
+                            {tab === "local" ? t("local") : tab === "places" ? t("places") : tab === "zones" ? t("zones") : t("agenda")}
                         </span>
                         {tab === "experience" && experienceLog.length > 0 && (
                             <span className="shrink-0 inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-500 text-white text-[7px] font-black">
@@ -129,14 +140,14 @@ export function Panel() {
                     >
                         <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Patrimonio</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("heritage")}</p>
                                 <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
                                     {currentComuna ? currentComuna.name : "Explorando Cali"}
                                 </p>
                             </div>
                             <div className="text-right">
-                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
-                                <p className="text-[13px] font-semibold text-blue-500">1 km</p>
+                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("radius")}</p>
+                                <p className="text-[13px] font-semibold text-blue-500">1-2.5 km</p>
                             </div>
                         </div>
 
@@ -145,10 +156,10 @@ export function Panel() {
                                 {loadingLandmarks && localLandmarks.length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
                                         <div className="w-8 h-8 border-3 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-                                        <p className="text-[12px] font-bold">Escaneando historia...</p>
+                                        <p className="text-[12px] font-bold">{t("scanningHistory")}</p>
                                     </div>
                                 )}
-                                {localLandmarks.map((landmark, idx) => (
+                                {localLandmarks.slice((localPage - 1) * 20, localPage * 20).map((landmark, idx) => (
                                     <motion.div
                                         key={landmark.name}
                                         initial={{ opacity: 0, y: 10 }}
@@ -347,7 +358,7 @@ export function Panel() {
                                                         className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 transition-all shadow-sm shadow-blue-500/20 active:scale-95"
                                                     >
                                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                                                        Ver Ruta
+                                                        {t("viewRoute")}
                                                     </button>
 
                                                     <button
@@ -356,8 +367,14 @@ export function Panel() {
                                                             setExpandedLandmark(landmark.name);
                                                             
                                                             if (speak) {
+                                                                if (!voiceReady) {
+                                                                    window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
+                                                                        detail: { reason: "expand-landmark", landmark: landmark.name },
+                                                                    }));
+                                                                    return;
+                                                                }
                                                                 const prompt = `El turista acaba de seleccionar el lugar histórico: ${landmark.name}. Cuéntale un dato histórico o arquitectónico súper fascinante y poco conocido de este lugar, como si fuera una gran anécdota.`;
-                                                                fetchNarration(prompt, "monument", "es").then(text => {
+                                                                fetchNarration(prompt, "monument", language).then(text => {
                                                                     if (text) {
                                                                         speak({ type: "monument", text, title: landmark.name, icon: "🏛️" });
                                                                     }
@@ -366,7 +383,7 @@ export function Panel() {
                                                         }}
                                                         className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-[11px] font-bold hover:bg-zinc-200 transition-all active:scale-95"
                                                     >
-                                                        Expandir
+                                                        {t("expand")}
                                                     </button>
                                                 </div>
                                             </div>
@@ -379,10 +396,35 @@ export function Panel() {
                                         <div className="w-12 h-12 rounded-2xl bg-zinc-50 flex items-center justify-center mb-4 border border-black/5">
                                             <LandmarkIcon className="w-6 h-6 text-zinc-400" />
                                         </div>
-                                        <p className="text-[14px] font-black text-zinc-800">Nada que ver por aquí</p>
+                                        <p className="text-[14px] font-black text-zinc-800">{t("nothingHereTitle")}</p>
                                         <p className="text-[11px] text-zinc-400 mt-1 max-w-[180px] leading-relaxed">
-                                            No hemos encontrado monumentos históricos en tu ubicación actual.
+                                            {t("nothingHereBody")}
                                         </p>
+                                    </div>
+                                )}
+
+                                {localLandmarks.length > 20 && (
+                                    <div className="sticky bottom-0 mt-2 flex items-center justify-between border-t border-black/5 bg-[#f7f6f3]/95 px-2 py-4 backdrop-blur-sm">
+                                        <button
+                                            onClick={() => setLocalPage(p => Math.max(1, p - 1))}
+                                            disabled={localPage === 1}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                        >
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </button>
+                                        <div className="text-center">
+                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">Página</p>
+                                            <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">
+                                                {localPage} / {Math.ceil(localLandmarks.length / 20)}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => setLocalPage(p => Math.min(Math.ceil(localLandmarks.length / 20), p + 1))}
+                                            disabled={localPage === Math.ceil(localLandmarks.length / 20)}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
                                     </div>
                                 )}
                             </div>
@@ -400,16 +442,16 @@ export function Panel() {
                     >
                         <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Cercanos</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("nearby")}</p>
                                 <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                                    {loadingPlaces ? "Buscando..." : `${places.length} negocios`}
+                                    {loadingPlaces ? t("searching") : t("businessCount", { count: places.length })}
                                 </p>
                             </div>
                             {coords && (
                                 <div className="flex items-center gap-3">
                                     <div className="text-right">
-                                        <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Radio</p>
-                                        <p className="text-[13px] font-semibold text-blue-500">1 km</p>
+                                        <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("radius")}</p>
+                                        <p className="text-[13px] font-semibold text-blue-500">1-5 km</p>
                                     </div>
                                     <button 
                                         onClick={() => setIsPlacesExpanded(!isPlacesExpanded)}
@@ -447,7 +489,7 @@ export function Panel() {
                             <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
                                 {places.length === 0 && (
                                     <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
-                                        {status === "tracking" ? "Sin negocios en el área." : status === "loading" ? "Buscando tu ubicación en Cali..." : "Comparte tu ubicación para ver negocios cercanos."}
+                                        {status === "tracking" ? t("noBusinesses") : status === "loading" ? t("findingLocation") : t("shareLocationForPlaces")}
                                     </div>
                                 )}
                                 <motion.div className="flex flex-col gap-1" layout>
@@ -473,7 +515,7 @@ export function Panel() {
                                                     <p className="text-[11px] text-zinc-400 truncate">{place.vicinity}</p>
                                                     <div className="flex items-center gap-2 mt-0.5">
                                                         <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
-                                                            {getCategoryLabel(place.types)}
+                                                            {getCategoryLabel(place.types, language)}
                                                         </span>
                                                         {place.rating != null && (
                                                             <>
@@ -509,7 +551,7 @@ export function Panel() {
                                             <ChevronLeft className="w-4 h-4" />
                                         </button>
                                         <div className="text-center">
-                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">Página</p>
+                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">{t("page")}</p>
                                             <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(places.length / 20)}</p>
                                         </div>
                                         <button
@@ -528,9 +570,9 @@ export function Panel() {
 
                         <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Hoteles</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("hotels")}</p>
                                 <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                                    {loadingHotels ? "Buscando..." : `${hotels.length} hoteles`}
+                                    {loadingHotels ? t("searching") : t("hotelCount", { count: hotels.length })}
                                 </p>
                             </div>
                             <div className="flex items-center gap-3">
@@ -561,7 +603,7 @@ export function Panel() {
 
                                 {!loadingHotels && hotels.length === 0 && (
                                     <div className="text-[12px] text-zinc-400 text-center py-8">
-                                        No se encontraron hoteles en la zona.
+                                        {t("noHotels")}
                                     </div>
                                 )}
 
@@ -584,7 +626,7 @@ export function Panel() {
                                                 </div>
                                                 <div className="shrink-0 text-right">
                                                     <p className="text-[13px] font-bold text-zinc-800">{hotel.price1}</p>
-                                                    <p className="text-[9px] font-medium uppercase tracking-tighter text-zinc-400">Por noche</p>
+                                                    <p className="text-[9px] font-medium uppercase tracking-tighter text-zinc-400">{t("perNight")}</p>
                                                 </div>
                                             </div>
                                         ))}
@@ -597,7 +639,7 @@ export function Panel() {
                                             <ChevronLeft className="w-4 h-4" />
                                         </button>
                                         <div className="text-center">
-                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">Página</p>
+                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">{t("page")}</p>
                                             <p className="text-[13px] font-black text-purple-600 leading-none mt-0.5">{hotelsPage} / {Math.ceil(hotels.length / 10)}</p>
                                         </div>
                                         <button onClick={() => setHotelsPage(p => Math.min(Math.ceil(hotels.length / 10), p + 1))} disabled={hotelsPage === Math.ceil(hotels.length / 10)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all">
@@ -622,13 +664,13 @@ export function Panel() {
                         {/* Header */}
                         <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
                             <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">Agenda Cali</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("agendaCali")}</p>
                                 <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                                    {CALI_EVENTS_TODAY.length} eventos para hoy
+                                    {t("eventsToday", { count: CALI_EVENTS_TODAY.length })}
                                 </p>
                             </div>
                             <div className="text-right">
-                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">Fecha</p>
+                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("date")}</p>
                                 <p className="text-[12px] font-semibold text-zinc-800 mt-0.5">
                                     Abril 30, 2026
                                 </p>
@@ -700,7 +742,7 @@ export function Panel() {
                                 {(Object.entries(RISK_CONFIG) as [RiskLevel, typeof RISK_CONFIG[RiskLevel]][]).map(([level, cfg]) => (
                                     <div key={level} className="flex items-center gap-1.5 shrink-0 bg-white border border-black/5 px-2 py-1.5 rounded-lg shadow-sm">
                                         <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cfg.fill, border: `1px solid ${cfg.stroke}` }} />
-                                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-tighter whitespace-nowrap">{cfg.label}</span>
+                                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-tighter whitespace-nowrap">{RISK_LABELS[level][language]}</span>
                                     </div>
                                 ))}
                             </div>
@@ -708,7 +750,7 @@ export function Panel() {
 
                         {/* Comunas list */}
                         <div className="overflow-y-auto overscroll-contain flex-1 px-4 pb-4">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2 mt-2">Las 22 Comunas</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 mb-2 mt-2">{t("allComunas")}</p>
                             <div className="flex flex-col gap-1">
                                 {CALI_COMUNAS.map((c, index) => (
                                     <motion.div
@@ -730,7 +772,7 @@ export function Panel() {
                                             className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
                                             style={{ background: `${RISK_CONFIG[c.risk].fill}22`, color: RISK_CONFIG[c.risk].color }}
                                         >
-                                            {RISK_CONFIG[c.risk].label.toUpperCase()}
+                                            {RISK_LABELS[c.risk][language].toUpperCase()}
                                         </span>
                                     </motion.div>
                                 ))}

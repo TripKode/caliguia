@@ -109,6 +109,96 @@ const fetchWikipediaSummary = async (title: string): Promise<{ extract: string; 
     }
 };
 
+const LANDMARK_PLACE_FIELDS = [
+    "id",
+    "displayName",
+    "location",
+    "types",
+    "primaryType",
+    "editorialSummary",
+    "formattedAddress",
+    "rating",
+    "userRatingCount",
+    "photos",
+] as const;
+
+const HERITAGE_PLACE_TYPES = [
+    "tourist_attraction",
+    "museum",
+    "church",
+    "historical_landmark",
+    "art_gallery",
+    "park",
+] as const;
+
+const BROAD_LOCAL_PLACE_TYPES = [
+    "tourist_attraction",
+    "museum",
+    "church",
+    "historical_landmark",
+    "art_gallery",
+    "park",
+    "cultural_center",
+    "performing_arts_theater",
+] as const;
+
+function getPlaceName(place: any) {
+    if (typeof place.displayName === "string") return place.displayName;
+    return place.displayName?.text || "Lugar cercano";
+}
+
+function getPlaceTypeLabel(types: string[] = [], primaryType?: string, language: "es" | "en" | "pt" = "es") {
+    const typeSet = new Set([primaryType, ...types].filter(Boolean));
+    const labels = {
+        museum: { es: "Museo", en: "Museum", pt: "Museu" },
+        church: { es: "Patrimonio Religioso", en: "Religious Heritage", pt: "Patrimônio Religioso" },
+        art_gallery: { es: "Arte y Cultura", en: "Art and Culture", pt: "Arte e Cultura" },
+        historical_landmark: { es: "Sitio Histórico", en: "Historic Site", pt: "Sítio Histórico" },
+        park: { es: "Parque", en: "Park", pt: "Parque" },
+        cultural_center: { es: "Centro Cultural", en: "Cultural Center", pt: "Centro Cultural" },
+        performing_arts_theater: { es: "Teatro", en: "Theater", pt: "Teatro" },
+        tourist_attraction: { es: "Atracción Local", en: "Local Attraction", pt: "Atração Local" },
+        fallback: { es: "Lugar Cercano", en: "Nearby Place", pt: "Lugar Próximo" },
+    };
+
+    if (typeSet.has("museum")) return labels.museum[language];
+    if (typeSet.has("church")) return labels.church[language];
+    if (typeSet.has("art_gallery")) return labels.art_gallery[language];
+    if (typeSet.has("historical_landmark")) return labels.historical_landmark[language];
+    if (typeSet.has("park")) return labels.park[language];
+    if (typeSet.has("cultural_center")) return labels.cultural_center[language];
+    if (typeSet.has("performing_arts_theater")) return labels.performing_arts_theater[language];
+    if (typeSet.has("tourist_attraction")) return labels.tourist_attraction[language];
+    return labels.fallback[language];
+}
+
+function getPlaceSummary(place: any, typeLabel: string, language: "es" | "en" | "pt" = "es") {
+    if (place.editorialSummary) return place.editorialSummary;
+    if (language === "en") {
+        if (place.formattedAddress) return `Nearby ${typeLabel.toLowerCase()} in Santiago de Cali. Address registered by Google Places: ${place.formattedAddress}.`;
+        return `Nearby ${typeLabel.toLowerCase()} registered by Google Places in Santiago de Cali.`;
+    }
+    if (language === "pt") {
+        if (place.formattedAddress) return `${typeLabel} próximo em Santiago de Cali. Endereço registrado pelo Google Places: ${place.formattedAddress}.`;
+        return `${typeLabel} próximo registrado pelo Google Places em Santiago de Cali.`;
+    }
+    if (place.formattedAddress) return `${typeLabel} cercano en Santiago de Cali. Dirección registrada por Google Places: ${place.formattedAddress}.`;
+    return `${typeLabel} cercano registrado por Google Places en Santiago de Cali.`;
+}
+
+function getPlacePhotos(place: any) {
+    return (place.photos || [])
+        .map((photo: any) => {
+            try {
+                return photo.getURI?.({ maxWidth: 900, maxHeight: 700 });
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean)
+        .slice(0, 5) as string[];
+}
+
 const getComunaInfoWindowContent = (comuna: ComunaData) => {
     const cfg = RISK_CONFIG[comuna.risk];
     return `
@@ -190,6 +280,7 @@ export function UseHome() {
         unlockSpeech,
         speechUnlocked,
         voicePreference,
+        voiceReady,
         selectedVoiceId,
         availableVoices,
         setVoice,
@@ -329,7 +420,10 @@ export function UseHome() {
 
     const fetchNearby = useCallback(async (lat: number, lng: number) => {
         if (!mapInstance.current || !google.maps.places) return;
-        if (!isInsideCaliBounds(lat, lng)) return;
+        if (!isInsideCaliBounds(lat, lng)) {
+            setPlaces([]);
+            return;
+        }
         if (lastFetchPos.current) {
             const dist = haversineDistance(lastFetchPos.current.lat, lastFetchPos.current.lng, lat, lng);
             if (dist < 150) return;
@@ -338,110 +432,150 @@ export function UseHome() {
         setLoadingPlaces(true);
 
         try {
-            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+            const { Place, SearchNearbyRankPreference } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+            const searchRadii = [1000, 2500, 5000];
+            const seen = new Set<string>();
+            const allPlaces: NearbyPlace[] = [];
 
-            const request = {
-                fields: ["id", "displayName", "location", "types", "rating", "userRatingCount", "formattedAddress", "businessStatus"],
-                locationRestriction: {
-                    center: { lat, lng },
-                    radius: 1000,
-                },
-                maxResultCount: 20
-            };
+            for (const radius of searchRadii) {
+                const request: any = {
+                    fields: ["id", "displayName", "location", "types", "rating", "userRatingCount", "formattedAddress", "businessStatus"],
+                    locationRestriction: {
+                        center: { lat, lng },
+                        radius,
+                    },
+                    maxResultCount: 20,
+                    rankPreference: SearchNearbyRankPreference.DISTANCE,
+                    language,
+                    region: "CO",
+                };
 
-            const { places } = await Place.searchNearby(request);
+                const { places } = await Place.searchNearby(request);
+                const mapped = (places || [])
+                    .filter((p: any) => p.location && getPlaceName(p))
+                    .filter((p: any) => isInsideCaliBounds(p.location.lat(), p.location.lng()))
+                    .map((p: any): NearbyPlace => ({
+                        place_id: p.id,
+                        name: getPlaceName(p),
+                        vicinity: p.formattedAddress || "Dirección no disponible",
+                        rating: p.rating,
+                        user_ratings_total: p.userRatingCount,
+                        types: p.types || [],
+                        geometry: { location: p.location },
+                        business_status: p.businessStatus as any,
+                    }));
 
-            if (places && places.length > 0) {
-                const mapped = places.map((p: any): NearbyPlace => ({
-                    place_id: p.id,
-                    name: p.displayName,
-                    vicinity: p.formattedAddress || "Dirección no disponible",
-                    rating: p.rating,
-                    user_ratings_total: p.userRatingCount,
-                    types: p.types || [],
-                    geometry: { location: p.location },
-                    business_status: p.businessStatus as any,
-                }));
-
-                const sorted = mapped.sort((a, b) => {
-                    const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
-                    const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
-                    return da - db;
+                mapped.forEach(place => {
+                    const id = place.place_id || `${place.name}-${place.geometry.location.lat()}-${place.geometry.location.lng()}`;
+                    if (!seen.has(id)) {
+                        seen.add(id);
+                        allPlaces.push(place);
+                    }
                 });
-                setPlaces(sorted);
-            } else {
-                setPlaces([]);
+
+                if (allPlaces.length >= 40) break;
             }
+
+            const sorted = allPlaces.sort((a, b) => {
+                const da = haversineDistance(lat, lng, a.geometry.location.lat(), a.geometry.location.lng());
+                const db = haversineDistance(lat, lng, b.geometry.location.lat(), b.geometry.location.lng());
+                return da - db;
+            });
+
+            setPlaces(sorted);
         } catch (e) {
             console.error("Place API search error:", e);
+            setPlaces([]);
         } finally {
             setLoadingPlaces(false);
         }
-    }, []);
+    }, [language]);
 
     const fetchLocalLandmarks = useCallback(async (lat: number, lng: number) => {
         if (!mapInstance.current || !google.maps.places) return;
-        if (!isInsideCaliBounds(lat, lng)) return;
+        if (!isInsideCaliBounds(lat, lng)) {
+            setLocalLandmarks([]);
+            return;
+        }
 
         setLoadingLandmarks(true);
         try {
-            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+            const { Place, SearchNearbyRankPreference } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
 
-            const request = {
-                fields: ["id", "displayName", "location", "types"],
-                includedTypes: ["tourist_attraction", "museum", "church", "historical_landmark"],
-                locationRestriction: {
-                    center: { lat, lng },
-                    radius: 1000,
-                },
-                maxResultCount: 15
-            };
+            const searchPlans = [
+                { radius: 1200, includedTypes: HERITAGE_PLACE_TYPES },
+                { radius: 2500, includedTypes: BROAD_LOCAL_PLACE_TYPES },
+                { radius: 1200, includedTypes: undefined },
+            ];
 
-            const { places } = await Place.searchNearby(request);
+            let foundPlaces: any[] = [];
 
-            if (places && places.length > 0) {
-                const newLandmarks: Landmark[] = await Promise.all(places.map(async (p: any): Promise<Landmark> => {
-                    const name = p.displayName ?? "Lugar Histórico";
-                    const typeLabel = p.types?.includes("museum") ? "Museo" : p.types?.includes("church") ? "Patrimonio Religioso" : "Sitio Histórico";
+            for (const plan of searchPlans) {
+                const request: any = {
+                    fields: LANDMARK_PLACE_FIELDS,
+                    locationRestriction: {
+                        center: { lat, lng },
+                        radius: plan.radius,
+                    },
+                    maxResultCount: 20,
+                    rankPreference: SearchNearbyRankPreference.DISTANCE,
+                    language,
+                    region: "CO",
+                };
 
-                    let history = "";
-                    let images: string[] = [];
+                if (plan.includedTypes) request.includedTypes = [...plan.includedTypes];
 
-                    const wikiData = await fetchWikipediaSummary(name);
-                    if (wikiData) {
-                        history = wikiData.extract;
-                        images = wikiData.images;
-                    }
+                const result = await Place.searchNearby(request);
+                foundPlaces = (result.places || [])
+                    .filter((place: any) => place.location && getPlaceName(place))
+                    .filter((place: any) => isInsideCaliBounds(place.location.lat(), place.location.lng()));
 
-                    if (!history) {
-                        history = `${typeLabel} representativo de la zona de ${currentComuna?.name || "Cali"}, fundamental para la identidad y el patrimonio de la capital del Valle.`;
-                    }
+                if (foundPlaces.length > 0) break;
+            }
+
+            const seen = new Set<string>();
+            const newLandmarks: Landmark[] = foundPlaces
+                .filter((place: any) => {
+                    const id = place.id || getPlaceName(place);
+                    if (seen.has(id)) return false;
+                    seen.add(id);
+                    return true;
+                })
+                .sort((a: any, b: any) => {
+                    const da = haversineDistance(lat, lng, a.location.lat(), a.location.lng());
+                    const db = haversineDistance(lat, lng, b.location.lat(), b.location.lng());
+                    return da - db;
+                })
+                .slice(0, 20)
+                .map((place: any): Landmark => {
+                    const name = getPlaceName(place);
+                    const types = place.types || [];
+                    const typeLabel = getPlaceTypeLabel(types, place.primaryType, language);
+                    const history = getPlaceSummary(place, typeLabel, language);
 
                     return {
                         name,
-                        lat: p.location!.lat(),
-                        lng: p.location!.lng(),
+                        lat: place.location.lat(),
+                        lng: place.location.lng(),
                         type: "monument",
                         icon: "",
                         description: typeLabel,
                         history: history.length > 500 ? history.substring(0, 497) + "..." : history,
                         radiusM: 200,
-                        place_id: p.id,
-                        images,
-                        prompt: `Háblale al usuario sobre ${name} y su relevancia histórica en Cali.`,
+                        place_id: place.id,
+                        images: getPlacePhotos(place),
+                        prompt: `Háblale al usuario sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Usa únicamente contexto local y sé breve.`,
                     };
-                }));
+                });
 
-                setLocalLandmarks(newLandmarks);
-            } else {
-                setLocalLandmarks([]);
-            }
+            setLocalLandmarks(newLandmarks);
         } catch (e) {
             console.error("Place API landmarks error:", e);
+            setLocalLandmarks([]);
         } finally {
             setLoadingLandmarks(false);
         }
-    }, [currentComuna]);
+    }, [language]);
 
     const applyCameraZoom = useCallback((zoomLevel: ArZoomLevel) => {
         const stream = webcamRef.current?.video?.srcObject as MediaStream | null;
@@ -850,7 +984,7 @@ export function UseHome() {
                 mapInstance.current.setTilt(currentTilt === 45 ? 0 : 45);
             }
         },
-        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, aiContext, selectComuna,
+        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, voiceReady, aiContext, selectComuna,
         selectedVoiceId, availableVoices, setVoice, verbosity, setVerbosity,
         previewVoice,
         speak

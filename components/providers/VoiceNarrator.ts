@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import type { LanguageCode } from "@/components/providers/ExperienceProvider";
+import { getActiveVoiceSample } from "@/components/providers/voiceSampleStore";
 
 export type NarrationType = "monument" | "route" | "danger" | "info" | "welcome";
 
@@ -101,6 +103,7 @@ function buildVoicesForLanguage(systemVoices: SpeechSynthesisVoice[], language: 
 }
 
 export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNarratorOptions = {}) {
+  const { status } = useSession();
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentNarration, setCurrentNarration] = useState<NarrationEvent | null>(null);
   const [experienceLog, setExperienceLog] = useState<NarrationEvent[]>([]);
@@ -112,17 +115,47 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   const queueRef = useRef<NarrationEvent[]>([]);
   const isPlayingRef = useRef(false);
   const unlockedRef = useRef(false);
   const languageRef = useRef<LanguageCode>(language);
   const availableVoicesRef = useRef<CaliVoice[]>([]);
   const selectedVoiceIdRef = useRef<string>("");
+  const [gradioVoiceReady, setGradioVoiceReady] = useState(false);
+  const gradioVoiceReadyRef = useRef(false);
 
   // Keep refs current
   useEffect(() => { languageRef.current = language; }, [language]);
   useEffect(() => { availableVoicesRef.current = availableVoices; }, [availableVoices]);
   useEffect(() => { selectedVoiceIdRef.current = selectedVoiceId; }, [selectedVoiceId]);
+  useEffect(() => { gradioVoiceReadyRef.current = gradioVoiceReady; }, [gradioVoiceReady]);
+
+  useEffect(() => {
+    const loadGradioVoice = async () => {
+      if (status !== "authenticated") {
+        setGradioVoiceReady(false);
+        return;
+      }
+
+      try {
+        const [preferencesRes, sample] = await Promise.all([
+          fetch("/api/users/me/preferences", { cache: "no-store" }),
+          getActiveVoiceSample(),
+        ]);
+        const preferences = preferencesRes.ok ? await preferencesRes.json() : null;
+        setGradioVoiceReady(Boolean(preferences?.activeProviderVoiceId && sample));
+      } catch {
+        setGradioVoiceReady(false);
+      }
+    };
+
+    const onVoiceChanged = () => loadGradioVoice();
+    loadGradioVoice();
+    window.addEventListener("caliguia:voice-cloned", onVoiceChanged);
+    return () => window.removeEventListener("caliguia:voice-cloned", onVoiceChanged);
+  }, [status]);
 
   // ── Load real browser voices + filter by current language ─────────────────
   useEffect(() => {
@@ -158,8 +191,14 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   }, []);
 
   const stopSpeaking = useCallback(() => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
+    if (typeof window === "undefined") return;
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
     setIsSpeaking(false);
     isPlayingRef.current = false;
     utteranceRef.current = null;
@@ -168,51 +207,82 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const playNext = useCallback(() => {
     if (muted || !queueRef.current.length || isPlayingRef.current) return;
     if (!unlockedRef.current) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (typeof window === "undefined") return;
 
     const event = queueRef.current.shift()!;
     setCurrentNarration(event);
     isPlayingRef.current = true;
     setIsSpeaking(true);
 
-    window.speechSynthesis.resume();
+    const finishAndContinue = () => {
+      isPlayingRef.current = false;
+      setIsSpeaking(false);
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+      setTimeout(() => playNext(), 900);
+    };
 
-    const utterance = new SpeechSynthesisUtterance(event.text);
-    utterance.rate = 0.92;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    // Assign the actual selected SpeechSynthesisVoice object (using refs to avoid stale closures)
-    const currentVoices = availableVoicesRef.current;
-    const currentSelectedId = selectedVoiceIdRef.current;
-    const selectedCaliVoice = currentVoices.find(v => v.id === currentSelectedId);
-
-    if (selectedCaliVoice) {
-      utterance.voice = selectedCaliVoice.systemVoice;
-      utterance.lang = selectedCaliVoice.lang;
-    } else {
-      // Fallback to BCP47 lang tag of the current language
-      const fallbackLangs: Record<LanguageCode, string> = { es: "es-CO", en: "en-US", pt: "pt-BR" };
-      utterance.lang = fallbackLangs[languageRef.current];
+    if (!gradioVoiceReady) {
+      window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
+        detail: { reason: "missing-voice", narration: event },
+      }));
+      finishAndContinue();
+      return;
     }
 
-    utterance.onend = () => {
-      isPlayingRef.current = false;
-      setIsSpeaking(false);
-      setTimeout(() => playNext(), 900);
-    };
-    utterance.onerror = () => {
-      isPlayingRef.current = false;
-      setIsSpeaking(false);
-      setTimeout(() => playNext(), 900);
-    };
-
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-  }, [muted]); // Stable — uses refs for voices/selectedId/language
+    getActiveVoiceSample()
+      .then(sample => {
+        if (!sample) throw new Error("Missing voice sample");
+        const formData = new FormData();
+        formData.append("file", new File([sample], "caliguia-reference-voice.webm", { type: sample.type || "audio/webm" }));
+        formData.append("text", event.text);
+        formData.append("style", "default");
+        return fetch("/api/gradio/speech", {
+          method: "POST",
+          body: formData,
+        });
+      })
+      .then(async res => {
+        if (!res.ok) throw new Error("OpenVoice speech failed");
+        const audioBlob = await res.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        audioUrlRef.current = audioUrl;
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+        audio.onended = finishAndContinue;
+        audio.onerror = () => {
+          if (audioUrlRef.current) {
+            URL.revokeObjectURL(audioUrlRef.current);
+            audioUrlRef.current = null;
+          }
+          window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
+            detail: { reason: "voice-playback-failed", narration: event },
+          }));
+          finishAndContinue();
+        };
+        return audio.play();
+      })
+      .catch(() => {
+        if (!isPlayingRef.current) return;
+        setGradioVoiceReady(false);
+        window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
+          detail: { reason: "voice-speech-failed", narration: event },
+        }));
+        finishAndContinue();
+      });
+  }, [muted, gradioVoiceReady]); // Uses refs for browser voices/selectedId/language
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
+      if (!gradioVoiceReadyRef.current) {
+        window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
+          detail: { reason: "missing-voice", narration: event },
+        }));
+        return;
+      }
+
       const narration: NarrationEvent = {
         ...event,
         id: crypto.randomUUID(),
@@ -296,6 +366,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     stopSpeaking,
     unlockSpeech,
     clearLog: () => setExperienceLog([]),
+    voiceReady: gradioVoiceReady,
   };
 }
 

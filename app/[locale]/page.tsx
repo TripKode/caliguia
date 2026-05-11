@@ -1,6 +1,6 @@
 "use client";
 
-import { MapProvider } from "../hooks/UseMap";
+import { MapProvider } from "../../hooks/UseMap";
 import MapContent from "@/components/map/MapContent";
 import PWAManager from "@/components/PWAManager";
 

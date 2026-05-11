@@ -1,6 +1,9 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSession } from "next-auth/react";
+import { useLocale } from "next-intl";
+import { usePathname, useRouter } from "@/i18n/navigation";
 
 export const LANGUAGES = {
   es: { label: "Español", instruction: "Respondes en español." },
@@ -9,6 +12,8 @@ export const LANGUAGES = {
 } as const;
 
 export type LanguageCode = keyof typeof LANGUAGES;
+export const LANGUAGE_STORAGE_KEY = "caliguia_preferred_language";
+export const LANGUAGE_CONFIGURED_STORAGE_KEY = "caliguia_language_configured";
 export type ExperienceMode = "map" | "ar";
 export type InterestId = "salsa" | "naturaleza" | "patrimonio" | "gastronomia" | "deportivo" | "bienestar" | "compras";
 export type TravelGroup = "solo" | "pareja" | "familia" | "grupo";
@@ -54,7 +59,7 @@ export const TOURISM_INTERESTS: Record<InterestId, { label: string; profile: str
 
 type ExperienceContextValue = {
   language: LanguageCode;
-  setLanguage: (language: LanguageCode) => void;
+  setLanguage: (language: LanguageCode) => Promise<boolean>;
   selectedInterests: InterestId[];
   toggleInterest: (interest: InterestId) => void;
   travelGroup: TravelGroup;
@@ -66,10 +71,96 @@ type ExperienceContextValue = {
 const ExperienceContext = createContext<ExperienceContextValue | null>(null);
 
 export function ExperienceProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguage] = useState<LanguageCode>("es");
+  const router = useRouter();
+  const pathname = usePathname();
+  const locale = useLocale() as LanguageCode;
+  const { data: session, status, update } = useSession();
+  const [language, setLanguageState] = useState<LanguageCode>(
+    LANGUAGES[locale] ? locale : "es"
+  );
   const [selectedInterests, setSelectedInterests] = useState<InterestId[]>(["salsa", "patrimonio"]);
   const [travelGroup, setTravelGroup] = useState<TravelGroup>("pareja");
   const [pace, setPace] = useState<Pace>("tranquilo");
+
+  useEffect(() => {
+    if (LANGUAGES[locale]) {
+      setLanguageState(locale);
+      document.cookie = `caliguia_locale=${locale}; path=/; max-age=31536000; samesite=lax`;
+    }
+  }, [locale]);
+
+  useEffect(() => {
+    const preferred = session?.preferredLanguage;
+    if (preferred && LANGUAGES[preferred] && preferred !== locale) {
+      setLanguageState(preferred);
+      document.cookie = `caliguia_locale=${preferred}; path=/; max-age=31536000; samesite=lax`;
+      router.replace(pathname, { locale: preferred });
+    }
+  }, [locale, pathname, router, session?.preferredLanguage]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+
+    const pendingLanguage = sessionStorage.getItem(LANGUAGE_STORAGE_KEY) as LanguageCode | null;
+    const hasPendingLanguage = pendingLanguage && LANGUAGES[pendingLanguage];
+    const languageToSync = hasPendingLanguage ? pendingLanguage : session?.preferredLanguage;
+
+    if (!languageToSync || !LANGUAGES[languageToSync]) return;
+    if (session?.languageConfigured && session.preferredLanguage === languageToSync) return;
+
+    fetch("/api/users/me/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferredLanguage: languageToSync }),
+    })
+      .then(response => response.ok ? response.json() : null)
+      .then(preferences => {
+        if (!preferences) return;
+
+        sessionStorage.setItem(LANGUAGE_STORAGE_KEY, preferences.preferredLanguage);
+        sessionStorage.setItem(LANGUAGE_CONFIGURED_STORAGE_KEY, "true");
+        update({
+          preferredLanguage: preferences.preferredLanguage,
+          languageConfigured: preferences.languageConfigured,
+        });
+      })
+      .catch(() => null);
+  }, [session?.languageConfigured, session?.preferredLanguage, status, update]);
+
+  const setLanguage = useCallback(async (nextLanguage: LanguageCode) => {
+    setLanguageState(nextLanguage);
+    document.cookie = `caliguia_locale=${nextLanguage}; path=/; max-age=31536000; samesite=lax`;
+    sessionStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+    sessionStorage.setItem(LANGUAGE_CONFIGURED_STORAGE_KEY, "true");
+
+    if (status !== "authenticated" || (!session?.user?.id && !session?.user?.email)) {
+      router.replace(pathname, { locale: nextLanguage });
+      router.refresh();
+      return true;
+    }
+
+    const response = await fetch("/api/users/me/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferredLanguage: nextLanguage }),
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const preferences = await response.json();
+    sessionStorage.setItem(LANGUAGE_STORAGE_KEY, preferences.preferredLanguage);
+    sessionStorage.setItem(LANGUAGE_CONFIGURED_STORAGE_KEY, "true");
+    await update({
+      preferredLanguage: preferences.preferredLanguage,
+      languageConfigured: preferences.languageConfigured,
+    });
+
+    router.replace(pathname, { locale: nextLanguage });
+    router.refresh();
+    return true;
+  }, [pathname, router, session?.user?.email, session?.user?.id, status, update]);
 
   const value = useMemo<ExperienceContextValue>(
     () => ({
