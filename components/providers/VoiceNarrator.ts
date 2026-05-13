@@ -60,6 +60,9 @@ const PRIORITY_MAP: Record<LanguageCode, Record<string, number>> = {
   pt: PT_PRIORITY,
 };
 
+const SILENT_WAV_DATA_URL =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQQAAAAAAA==";
+
 function langScore(lang: string, language: LanguageCode): number {
   return PRIORITY_MAP[language][lang] ?? 99;
 }
@@ -132,6 +135,15 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   useEffect(() => { selectedVoiceIdRef.current = selectedVoiceId; }, [selectedVoiceId]);
   useEffect(() => { gradioVoiceReadyRef.current = gradioVoiceReady; }, [gradioVoiceReady]);
 
+  const ensureAudioElement = useCallback(() => {
+    if (audioRef.current) return audioRef.current;
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.setAttribute("playsinline", "true");
+    audioRef.current = audio;
+    return audio;
+  }, []);
+
   useEffect(() => {
     const loadGradioVoice = async () => {
       if (status !== "authenticated") {
@@ -193,8 +205,11 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const stopSpeaking = useCallback(() => {
     if (typeof window === "undefined") return;
     window.speechSynthesis?.cancel();
-    audioRef.current?.pause();
-    audioRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+    }
     if (audioUrlRef.current) {
       URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
@@ -259,9 +274,15 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         }
         const audioBlob = await res.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
+        if (audioUrlRef.current) {
+          URL.revokeObjectURL(audioUrlRef.current);
+        }
         audioUrlRef.current = audioUrl;
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
+        const audio = ensureAudioElement();
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+        audio.src = audioUrl;
         audio.onended = finishAndContinue;
         audio.onerror = error => {
           if (audioUrlRef.current) {
@@ -271,6 +292,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
           notifyVoicePlaybackError(event, error);
           finishAndContinue();
         };
+        audio.load();
         return audio.play();
       })
       .catch(error => {
@@ -278,7 +300,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         notifyVoicePlaybackError(event, error);
         finishAndContinue();
       });
-  }, [muted, gradioVoiceReady, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
+  }, [muted, gradioVoiceReady, ensureAudioElement, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
@@ -325,12 +347,26 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     if (granted) {
       unlockedRef.current = true;
       setSpeechUnlocked(true);
+      const audio = ensureAudioElement();
+      audio.muted = true;
+      audio.src = SILENT_WAV_DATA_URL;
+      audio.play()
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = false;
+          audio.removeAttribute("src");
+          audio.load();
+        })
+        .catch(() => {
+          audio.muted = false;
+        });
       const silent = new SpeechSynthesisUtterance(" ");
       silent.volume = 0;
       window.speechSynthesis.speak(silent);
       setTimeout(() => playNext(), 100);
     }
-  }, [playNext]);
+  }, [ensureAudioElement, playNext]);
 
   const setVoice = useCallback((id: string) => {
     setSelectedVoiceId(id);
