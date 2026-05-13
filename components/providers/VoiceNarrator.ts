@@ -157,7 +157,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
           getActiveVoiceSample(),
         ]);
         const preferences = preferencesRes.ok ? await preferencesRes.json() : null;
-        setGradioVoiceReady(Boolean(preferences?.activeProviderVoiceId && sample));
+        setGradioVoiceReady(Boolean(preferences?.activeProviderVoiceId || sample));
       } catch {
         setGradioVoiceReady(false);
       }
@@ -257,9 +257,10 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
 
     getActiveVoiceSample()
       .then(sample => {
-        if (!sample) throw new Error("Missing voice sample");
         const formData = new FormData();
-        formData.append("file", new File([sample], "caliguia-reference-voice.webm", { type: sample.type || "audio/webm" }));
+        if (sample) {
+          formData.append("file", new File([sample], "caliguia-reference-voice.webm", { type: sample.type || "audio/webm" }));
+        }
         formData.append("text", event.text);
         formData.append("language", languageRef.current);
         return fetch("/api/voice/speech", {

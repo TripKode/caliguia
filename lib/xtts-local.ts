@@ -5,14 +5,17 @@ function getXttsApiUrl() {
 }
 
 export async function createLocalXttsSpeech(params: {
-  file: File;
+  file?: Blob;
+  fileName?: string;
   text: string;
   language: string;
 }) {
   const formData = new FormData();
   formData.append("text", params.text);
   formData.append("language", params.language);
-  formData.append("speaker_wav", params.file);
+  if (params.file) {
+    formData.append("speaker_wav", params.file, params.fileName || "caliguia-reference-voice.webm");
+  }
 
   const response = await fetch(getXttsApiUrl(), {
     method: "POST",

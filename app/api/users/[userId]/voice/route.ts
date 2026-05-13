@@ -13,8 +13,9 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     select: {
       externalId: true,
       activeVoiceProvider: true,
+      activeProviderVoiceId: true,
       voiceClones: {
-        orderBy: { createdAt: "desc" },
+        orderBy: { updatedAt: "desc" },
         take: 5,
         select: {
           id: true,
@@ -23,13 +24,17 @@ export async function GET(_req: NextRequest, context: RouteContext) {
           providerVoiceName: true,
           status: true,
           requiresVerification: true,
+          sourceFileName: true,
+          sourceMimeType: true,
+          sourceSizeBytes: true,
           createdAt: true,
+          updatedAt: true,
         },
       },
     },
   });
 
-  const activeVoiceId = user?.voiceClones[0]?.providerVoiceId;
+  const activeVoiceId = user?.activeProviderVoiceId || user?.voiceClones[0]?.providerVoiceId;
 
   if (!activeVoiceId) {
     return NextResponse.json({ voice: null }, { status: 404 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { buildVoiceObjectName, uploadVoiceSample } from "@/lib/voice-storage";
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 
@@ -34,8 +35,27 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const providerVoiceId = `xtts-local:${userId}`;
-    const voiceName = `CALIGUIA_UID_${userId}`;
+    const voiceKey = crypto.randomUUID();
+    const providerVoiceId = `xtts-local:${userId}:${voiceKey}`;
+    const voiceName = `CALIGUIA_UID_${userId}_${voiceKey.slice(0, 8)}`;
+    const sampleMimeType = file.type || "audio/webm";
+    const sampleFileName = file.name || "caliguia-reference-voice.webm";
+    const objectName = buildVoiceObjectName({
+      userId,
+      voiceId: voiceKey,
+      fileName: sampleFileName,
+      mimeType: sampleMimeType,
+    });
+    const sampleBytes = Buffer.from(await file.arrayBuffer());
+
+    await uploadVoiceSample({
+      objectName,
+      bytes: sampleBytes,
+      mimeType: sampleMimeType,
+      originalFileName: sampleFileName,
+      userId,
+      voiceId: voiceKey,
+    });
 
     const user = await (prisma.user as any).update({
       where: { id: userId },
@@ -46,33 +66,23 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const savedVoice = await prisma.voiceClone.upsert({
-      where: { providerVoiceId },
-      update: {
-        providerVoiceName: voiceName,
-        sourceFileName: file.name || null,
-        sourceMimeType: file.type || null,
-        sourceSizeBytes: file.size,
-        status: "READY",
-        requiresVerification: false,
-        metadata: {
-          storage: "browser-indexeddb",
-          note: "XTTS local reuses the browser audio sample; no remote voice_id is generated.",
-        },
-      },
-      create: {
+    const savedVoice = await prisma.voiceClone.create({
+      data: {
         userId: user.id,
         provider: "XTTS_LOCAL" as any,
         providerVoiceId,
         providerVoiceName: voiceName,
         status: "READY",
-        sourceFileName: file.name || null,
-        sourceMimeType: file.type || null,
+        sourceFileName: sampleFileName,
+        sourceMimeType: sampleMimeType,
         sourceSizeBytes: file.size,
         requiresVerification: false,
         metadata: {
-          storage: "browser-indexeddb",
-          note: "XTTS local reuses the browser audio sample; no remote voice_id is generated.",
+          storage: "gcs",
+          bucketEnv: "CALIGUIA_VOICE_BUCKET",
+          objectName,
+          voiceKey,
+          note: "XTTS local uses this saved GCS voice sample; no remote voice_id is generated.",
         },
       },
     });
