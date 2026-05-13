@@ -47,7 +47,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const mimeType = voice.sourceMimeType || "audio/webm";
       console.log(`[voice-audio] Serving audio: ${mimeType}, size: ${audioBytes.length} bytes`);
 
-      return new Response(audioBytes, {
+      return new Response(audioBytes as any, {
         headers: {
           "Content-Type": mimeType,
           "Content-Length": audioBytes.length.toString(),
