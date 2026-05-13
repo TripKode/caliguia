@@ -711,8 +711,9 @@ export function UseHome() {
         mapInstance.current.fitBounds(caliBounds, isMobile ? 44 : 72);
         applyLayer(layerMode, mapInstance.current);
         fetchNearby(center.lat, center.lng);
+        fetchLocalLandmarks(center.lat, center.lng);
         detectComuna(center.lat, center.lng);
-    }, [isMobile, layerMode, applyLayer, fetchNearby, detectComuna]);
+    }, [isMobile, layerMode, applyLayer, fetchNearby, fetchLocalLandmarks, detectComuna]);
 
     const handlePosition = useCallback(async (position: GeolocationPosition) => {
         requestingLocationRef.current = false;
