@@ -92,16 +92,22 @@ export async function POST(req: NextRequest) {
     ? language
     : "es";
 
+  const startTime = Date.now();
   try {
     const activeProviderVoiceId = await getActiveProviderVoiceId();
+    console.log(`[voice/speech] Starting TTS for text: "${text.slice(0, 50)}...", voiceId: ${activeProviderVoiceId}`);
+    
     const savedSample = file instanceof File ? null : await getSavedVoiceSample(activeProviderVoiceId);
     const speakerFile = file instanceof File ? file : savedSample?.blob;
     const speakerFileName = file instanceof File ? file.name : savedSample?.fileName;
     const voiceId = activeProviderVoiceId || savedSample?.voiceId;
 
     if (!speakerFile) {
+      console.error("[voice/speech] No speaker reference audio found");
       return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
     }
+
+    console.log(`[voice/speech] Using speaker file: ${speakerFileName}, size: ${speakerFile.size} bytes`);
 
     const speech = await createLocalXttsSpeech({
       file: speakerFile,
@@ -111,19 +117,29 @@ export async function POST(req: NextRequest) {
       language: voiceLanguage,
       reference_text,
     });
+
+    if (!speech.ok) {
+      const errorMsg = await speech.text().catch(() => "Unknown error");
+      console.error(`[voice/speech] Worker failed with status ${speech.status}: ${errorMsg}`);
+      return NextResponse.json({ error: "TTS Worker failed", details: errorMsg }, { status: 502 });
+    }
+
     const audio = await speech.arrayBuffer();
+    const duration = (Date.now() - startTime) / 1000;
+    const contentType = speech.headers.get("content-type") ?? "audio/wav";
+    console.log(`[voice/speech] TTS completed in ${duration.toFixed(2)}s. Received ${audio.byteLength} bytes of ${contentType}`);
 
     return new NextResponse(audio, {
       status: 200,
       headers: {
-        "Content-Type": speech.headers.get("content-type") ?? "audio/wav",
+        "Content-Type": contentType,
         "Cache-Control": "no-store",
         "X-Voice-Provider": "xtts-local",
       },
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[voice/speech]", message);
-    return NextResponse.json({ error: "XTTS generation failed", message }, { status: 502 });
+  } catch (error: any) {
+    const duration = (Date.now() - startTime) / 1000;
+    console.error(`[voice/speech] Server Error after ${duration.toFixed(2)}s:`, error.message);
+    return NextResponse.json({ error: "XTTS generation failed", message: error.message }, { status: 502 });
   }
 }

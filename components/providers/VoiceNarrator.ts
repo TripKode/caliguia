@@ -255,6 +255,15 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
       return;
     }
 
+    // Safari Keep-Alive: Start playing silence immediately to keep the audio context "hot"
+    const audio = ensureAudioElement();
+    audio.muted = true;
+    audio.src = SILENT_WAV_DATA_URL;
+    audio.play().catch(() => { /* ignore */ });
+
+    // Web Audio API context for robust playback
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    
     getActiveVoiceSample()
       .then(sample => {
         const formData = new FormData();
@@ -273,28 +282,19 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
           const errorBody = await res.json().catch(() => null);
           throw new Error(errorBody?.message || errorBody?.error || `Voice generation failed (${res.status})`);
         }
-        const audioBlob = await res.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        if (audioUrlRef.current) {
-          URL.revokeObjectURL(audioUrlRef.current);
-        }
-        audioUrlRef.current = audioUrl;
-        const audio = ensureAudioElement();
-        audio.pause();
-        audio.currentTime = 0;
-        audio.muted = false;
-        audio.src = audioUrl;
-        audio.onended = finishAndContinue;
-        audio.onerror = error => {
-          if (audioUrlRef.current) {
-            URL.revokeObjectURL(audioUrlRef.current);
-            audioUrlRef.current = null;
-          }
-          notifyVoicePlaybackError(event, error);
-          finishAndContinue();
-        };
-        audio.load();
-        return audio.play();
+        
+        const arrayBuffer = await res.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        
+        source.onended = finishAndContinue;
+        source.start(0);
+        
+        // Keep reference to stop if needed
+        (window as any)._activeCaliSource = source;
       })
       .catch(error => {
         if (!isPlayingRef.current) return;

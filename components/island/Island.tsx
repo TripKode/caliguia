@@ -104,6 +104,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [voiceIdToReplace, setVoiceIdToReplace] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationRef = useRef<number | null>(null);
   const isAuthenticated = status === "authenticated";
   const isAuthLoading = status === "loading";
   const userName = session?.user?.name || session?.user?.email || "Usuario";
@@ -389,8 +392,13 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       window.clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
     recordingStreamRef.current?.getTracks().forEach(track => track.stop());
     recordingStreamRef.current = null;
+    analyserRef.current = null;
   }, []);
 
   const startVoiceRecording = useCallback(async () => {
@@ -405,25 +413,94 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       setVoiceCloneMessage("Grabando...");
       audioChunksRef.current = [];
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       recordingStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+
+      // --- Setup Visualizer and Recording Destination ---
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
+      const source = audioCtx.createMediaStreamSource(stream);
+      
+      // Create a destination for recording (this ensures we record what we hear)
+      const destination = audioCtx.createMediaStreamDestination();
+      
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      
+      // Connect: Mic -> Analyser -> Destination
+      source.connect(analyser);
+      source.connect(destination);
+      
+      analyserRef.current = analyser;
+
+      const draw = () => {
+        if (!canvasRef.current || !analyserRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const bufferLength = analyserRef.current.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = (dataArray[i] / 255) * canvas.height;
+          ctx.fillStyle = `rgba(59, 130, 246, ${0.3 + barHeight / canvas.height})`;
+          ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+          x += barWidth + 1;
+        }
+        animationRef.current = requestAnimationFrame(draw);
+      };
+      draw();
+      // --------------------------------------------------
+      
+      // Use the stream from the destination, not the raw mic stream
+      const recorderStream = destination.stream;
+      
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+          ? "audio/mp4"
+          : ""; 
+
+      const recorder = new MediaRecorder(recorderStream, mimeType ? { mimeType } : {});
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = event => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+          console.log("[Island] Data available:", event.data.size, "total chunks:", audioChunksRef.current.length);
+        }
       };
 
       recorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType });
+        console.log("[Island] Recording stopped. Final blob size:", audioBlob.size, "Mime:", recorder.mimeType);
         audioChunksRef.current = [];
+        
+        if (audioBlob.size < 5000) {
+          console.error("[Island] Recorded audio is too small:", audioBlob.size);
+          setVoiceCloneStatus("error");
+          setVoiceCloneMessage("Error: No se capturó audio. Revisa los permisos del micrófono.");
+          return;
+        }
+
         saveVoiceSample(audioBlob).catch(() => {
           setVoiceCloneStatus("error");
           setVoiceCloneMessage(t("voiceError"));
         });
       };
 
-      recorder.start();
+      recorder.start(1000);
       recordingTimerRef.current = window.setInterval(() => {
         setRecordingSeconds(prev => {
           const next = prev + 1;
@@ -432,8 +509,8 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
         });
       }, 1000);
     } catch {
-    setVoiceCloneStatus("error");
-    setVoiceCloneMessage(t("voiceMicError"));
+      setVoiceCloneStatus("error");
+      setVoiceCloneMessage(t("voiceMicError"));
     }
   }, [stopVoiceRecording, saveVoiceSample, voiceCloneStatus]);
 
@@ -1162,35 +1239,45 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
               </button>
             </div>
 
-            <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">{t("readForTen")}</p>
-                <button
-                  type="button"
-                  onClick={generateVoiceReadingText}
-                  disabled={isGeneratingVoiceText || voiceCloneStatus === "recording" || voiceCloneStatus === "uploading"}
-                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-white px-2.5 text-[10px] font-black text-blue-600 shadow-sm transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60"
-                >
-                  {isGeneratingVoiceText ? (
-                    <span className="h-3 w-3 rounded-full border-2 border-blue-200 border-t-blue-600 animate-spin" />
-                  ) : (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 3v3" />
-                      <path d="M12 18v3" />
-                      <path d="M3 12h3" />
-                      <path d="M18 12h3" />
-                      <path d="m5.6 5.6 2.1 2.1" />
-                      <path d="m16.3 16.3 2.1 2.1" />
-                      <path d="m18.4 5.6-2.1 2.1" />
-                      <path d="m7.7 16.3-2.1 2.1" />
-                    </svg>
-                  )}
-                  <span>{t("newVoiceText")}</span>
-                </button>
+            <div className="mt-5 relative overflow-hidden rounded-2xl border border-blue-100 bg-blue-50/50">
+              {voiceCloneStatus === "recording" && (
+                <canvas 
+                  ref={canvasRef} 
+                  className="absolute inset-0 w-full h-full opacity-20 pointer-events-none"
+                  width={400}
+                  height={120}
+                />
+              )}
+              <div className="relative px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">{t("readForTen")}</p>
+                  <button
+                    type="button"
+                    onClick={generateVoiceReadingText}
+                    disabled={isGeneratingVoiceText || voiceCloneStatus === "recording" || voiceCloneStatus === "uploading"}
+                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-white px-2.5 text-[10px] font-black text-blue-600 shadow-sm transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isGeneratingVoiceText ? (
+                      <span className="h-3 w-3 rounded-full border-2 border-blue-200 border-t-blue-600 animate-spin" />
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 3v3" />
+                        <path d="M12 18v3" />
+                        <path d="M3 12h3" />
+                        <path d="M18 12h3" />
+                        <path d="m5.6 5.6 2.1 2.1" />
+                        <path d="m16.3 16.3 2.1 2.1" />
+                        <path d="m18.4 5.6-2.1 2.1" />
+                        <path d="m7.7 16.3-2.1 2.1" />
+                      </svg>
+                    )}
+                    <span>{t("newVoiceText")}</span>
+                  </button>
+                </div>
+                <p className="mt-3 text-[14px] font-bold leading-relaxed text-blue-950">
+                  {voiceReadingText}
+                </p>
               </div>
-              <p className="mt-3 text-[14px] font-bold leading-relaxed text-blue-950">
-                {voiceReadingText}
-              </p>
             </div>
 
             <button
@@ -1203,15 +1290,17 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
             >
               {voiceCloneStatus === "uploading" ? (
                 <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+              ) : voiceCloneStatus === "recording" ? (
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 rounded-full bg-white animate-pulse" />
+                  <span>TERMINAR ({VOICE_SAMPLE_SECONDS - recordingSeconds}s)</span>
+                </div>
               ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <path d="M12 19v4" />
-                  <path d="M8 23h8" />
-                </svg>
+                <>
+                  <Mic className="w-4 h-4" />
+                  <span>{t("recordVoice")}</span>
+                </>
               )}
-              {voiceCloneStatus === "recording" ? t("recording", { time: `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}` }) : t("recordVoice")}
             </button>
 
             <p className={`mt-3 min-h-5 text-center text-[12px] font-bold ${
