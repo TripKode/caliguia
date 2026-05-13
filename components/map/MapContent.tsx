@@ -394,63 +394,6 @@ function MapContent() {
                 </div>
             </div>
 
-
-            {(status === "idle" || status === "loading" || status === "error") && !coords && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-[#f7f6f3]/95 px-8 text-center">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-500 text-2xl text-white shadow-lg shadow-blue-500/20">
-                        📍
-                    </div>
-                    <div>
-                        <p className="text-[16px] font-bold text-zinc-850">{t("enableLocationTitle")}</p>
-                        <p className="mt-2 max-w-70 text-[13px] leading-relaxed text-zinc-500">
-                            {t("enableLocationBody")}
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => requestLocation()}
-                        onPointerUp={() => requestLocation()}
-                        onTouchEnd={() => requestLocation()}
-                        disabled={status === "loading"}
-                        className="touch-manipulation rounded-full bg-blue-500 px-5 py-3 text-[13px] font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-600 disabled:cursor-wait disabled:bg-blue-400"
-                    >
-                        {status === "loading" ? t("requestingPermission") : t("useMyLocation")}
-                    </button>
-                    {locationError && (
-                        <p className="max-w-70 text-[12px] leading-relaxed text-red-500">
-                            {locationError}
-                        </p>
-                    )}
-                    {locationDebug && (
-                        <p className="max-w-[320px] wrap-break-word rounded-xl bg-white/70 px-3 py-2 text-[10px] leading-relaxed text-zinc-500">
-                            {locationDebug}
-                        </p>
-                    )}
-                </div>
-            )}
-
-            {status === "denied" && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-[#f7f6f3]">
-                    <p className="text-[13px] text-red-500 font-medium text-center max-w-65 leading-relaxed">
-                        {locationError ?? "Acceso denegado. Actívalo en la configuración de tu navegador y recarga la página."}
-                    </p>
-                    <button
-                        type="button"
-                        onClick={() => requestLocation()}
-                        onPointerUp={() => requestLocation()}
-                        onTouchEnd={() => requestLocation()}
-                        className="touch-manipulation rounded-full bg-blue-500 px-5 py-3 text-[13px] font-bold text-white shadow-lg shadow-blue-500/20 transition-colors hover:bg-blue-600"
-                    >
-                        {t("tryAgain")}
-                    </button>
-                    {locationDebug && (
-                        <p className="max-w-[320px] wrap-break-word rounded-xl bg-white/70 px-3 py-2 text-[10px] leading-relaxed text-zinc-500">
-                            {locationDebug}
-                        </p>
-                    )}
-                </div>
-            )}
-
             {/* ── Immersive Splash Screen / Audio Unlocker ── */}
             <AnimatePresence>
                 {(isAuthenticated && !speechUnlocked && !voiceMuted) && (

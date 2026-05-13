@@ -15,9 +15,10 @@ function isAudioFile(file: File) {
 type SavedVoiceSample = {
   blob: Blob;
   fileName: string;
+  voiceId: string;
 };
 
-async function getSavedVoiceSample(): Promise<SavedVoiceSample | null> {
+async function getActiveProviderVoiceId(): Promise<string | null> {
   const session = await auth();
   const userId = session?.user?.id;
   const email = session?.user?.email;
@@ -31,7 +32,10 @@ async function getSavedVoiceSample(): Promise<SavedVoiceSample | null> {
     },
   });
 
-  const activeProviderVoiceId = user?.activeProviderVoiceId;
+  return user?.activeProviderVoiceId || null;
+}
+
+async function getSavedVoiceSample(activeProviderVoiceId: string | null): Promise<SavedVoiceSample | null> {
   if (!activeProviderVoiceId) return null;
 
   const voice = await prisma.voiceClone.findUnique({
@@ -57,6 +61,7 @@ async function getSavedVoiceSample(): Promise<SavedVoiceSample | null> {
   return {
     blob: new Blob([body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)], { type: mimeType }),
     fileName,
+    voiceId: activeProviderVoiceId,
   };
 }
 
@@ -65,6 +70,7 @@ export async function POST(req: NextRequest) {
   const file = form?.get("file");
   const text = form?.get("text");
   const language = form?.get("language");
+  const reference_text = form?.get("reference_text") as string || "Hola, soy tu guía de Cali. Hoy caminaremos con calma, curiosidad y mucho sabor local.";
 
   if (file instanceof File && !isAudioFile(file)) {
     return NextResponse.json({ error: "File must be audio" }, { status: 415 });
@@ -87,9 +93,11 @@ export async function POST(req: NextRequest) {
     : "es";
 
   try {
-    const savedSample = file instanceof File ? null : await getSavedVoiceSample();
+    const activeProviderVoiceId = await getActiveProviderVoiceId();
+    const savedSample = file instanceof File ? null : await getSavedVoiceSample(activeProviderVoiceId);
     const speakerFile = file instanceof File ? file : savedSample?.blob;
     const speakerFileName = file instanceof File ? file.name : savedSample?.fileName;
+    const voiceId = activeProviderVoiceId || savedSample?.voiceId;
 
     if (!speakerFile) {
       return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
@@ -98,8 +106,10 @@ export async function POST(req: NextRequest) {
     const speech = await createLocalXttsSpeech({
       file: speakerFile,
       fileName: speakerFileName,
+      voiceId,
       text: text.trim(),
       language: voiceLanguage,
+      reference_text,
     });
     const audio = await speech.arrayBuffer();
 

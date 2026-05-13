@@ -7,12 +7,20 @@ function getXttsApiUrl() {
 export async function createLocalXttsSpeech(params: {
   file?: Blob;
   fileName?: string;
+  voiceId?: string;
   text: string;
   language: string;
+  reference_text?: string;
 }) {
   const formData = new FormData();
   formData.append("text", params.text);
   formData.append("language", params.language);
+  if (params.voiceId) {
+    formData.append("voice_id", params.voiceId);
+  }
+  if (params.reference_text) {
+    formData.append("reference_text", params.reference_text);
+  }
   if (params.file) {
     formData.append("speaker_wav", params.file, params.fileName || "caliguia-reference-voice.webm");
   }
