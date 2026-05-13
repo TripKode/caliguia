@@ -165,8 +165,16 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
   useEffect(() => {
     const onVoiceRequired = () => setShowVoiceSetupModal(true);
+    const onVoicePlaybackError = () => {
+      setVoiceCloneStatus("error");
+      setVoiceCloneMessage("No pude generar tu voz ahora. Revisa OpenVoice/Gradio y vuelve a intentar.");
+    };
     window.addEventListener("caliguia:voice-required", onVoiceRequired);
-    return () => window.removeEventListener("caliguia:voice-required", onVoiceRequired);
+    window.addEventListener("caliguia:voice-playback-error", onVoicePlaybackError);
+    return () => {
+      window.removeEventListener("caliguia:voice-required", onVoiceRequired);
+      window.removeEventListener("caliguia:voice-playback-error", onVoicePlaybackError);
+    };
   }, []);
 
   useEffect(() => {

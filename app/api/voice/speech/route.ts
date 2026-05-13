@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createOpenVoiceSpeech } from "@/lib/gradio-openvoice";
+import { createLocalXttsSpeech } from "@/lib/xtts-local";
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const MAX_TTS_CHARS = 900;
-const LANGUAGE_STYLES: Record<string, string> = {
-  es: process.env.GRADIO_OPENVOICE_STYLE_ES || process.env.GRADIO_OPENVOICE_STYLE || "default",
-  en: process.env.GRADIO_OPENVOICE_STYLE_EN || process.env.GRADIO_OPENVOICE_STYLE || "default",
-  pt: process.env.GRADIO_OPENVOICE_STYLE_PT || process.env.GRADIO_OPENVOICE_STYLE || "default",
-};
+const SUPPORTED_LANGUAGES = new Set(["es", "en", "pt"]);
 
 function isAudioFile(file: File) {
   return file.type.startsWith("audio/");
@@ -17,7 +13,6 @@ export async function POST(req: NextRequest) {
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
   const text = form?.get("text");
-  const style = form?.get("style");
   const language = form?.get("language");
 
   if (!(file instanceof File)) {
@@ -40,28 +35,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Text is too long" }, { status: 413 });
   }
 
+  const voiceLanguage = typeof language === "string" && SUPPORTED_LANGUAGES.has(language)
+    ? language
+    : "es";
+
   try {
-    const speech = await createOpenVoiceSpeech({
+    const speech = await createLocalXttsSpeech({
       file,
       text: text.trim(),
-      style: typeof style === "string" && style.trim()
-        ? style.trim()
-        : LANGUAGE_STYLES[typeof language === "string" ? language : "es"] ?? LANGUAGE_STYLES.es,
+      language: voiceLanguage,
     });
-    const audio = await speech.audioResponse.arrayBuffer();
+    const audio = await speech.arrayBuffer();
 
     return new NextResponse(audio, {
       status: 200,
       headers: {
-        "Content-Type": speech.audioResponse.headers.get("content-type") ?? "audio/wav",
+        "Content-Type": speech.headers.get("content-type") ?? "audio/wav",
         "Cache-Control": "no-store",
-        "X-Voice-Provider": "gradio-openvoice",
-        "X-OpenVoice-Audio-Url": speech.audioUrl,
+        "X-Voice-Provider": "xtts-local",
       },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[gradio/speech]", message);
-    return NextResponse.json({ error: "OpenVoice generation failed", message }, { status: 502 });
+    console.error("[voice/speech]", message);
+    return NextResponse.json({ error: "XTTS generation failed", message }, { status: 502 });
   }
 }

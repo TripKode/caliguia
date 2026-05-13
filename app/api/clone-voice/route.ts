@@ -34,14 +34,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const providerVoiceId = `gradio-openvoice:${userId}`;
+    const providerVoiceId = `xtts-local:${userId}`;
     const voiceName = `CALIGUIA_UID_${userId}`;
 
     const user = await (prisma.user as any).update({
       where: { id: userId },
       data: {
         displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : undefined,
-        activeVoiceProvider: "GRADIO_OPENVOICE",
+        activeVoiceProvider: "XTTS_LOCAL" as any,
         activeProviderVoiceId: providerVoiceId,
       },
     });
@@ -57,12 +57,12 @@ export async function POST(req: NextRequest) {
         requiresVerification: false,
         metadata: {
           storage: "browser-indexeddb",
-          note: "OpenVoice/Gradio reuses the local browser audio sample; no remote voice_id is generated.",
+          note: "XTTS local reuses the browser audio sample; no remote voice_id is generated.",
         },
       },
       create: {
         userId: user.id,
-        provider: "GRADIO_OPENVOICE",
+        provider: "XTTS_LOCAL" as any,
         providerVoiceId,
         providerVoiceName: voiceName,
         status: "READY",
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         requiresVerification: false,
         metadata: {
           storage: "browser-indexeddb",
-          note: "OpenVoice/Gradio reuses the local browser audio sample; no remote voice_id is generated.",
+          note: "XTTS local reuses the browser audio sample; no remote voice_id is generated.",
         },
       },
     });
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       voiceCloneId: savedVoice.id,
       voice_id: providerVoiceId,
-      provider: "GRADIO_OPENVOICE",
+      provider: "XTTS_LOCAL",
       voiceName,
       requiresVerification: false,
     });

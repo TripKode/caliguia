@@ -9,6 +9,7 @@ datasource db {
 
 enum VoiceProvider {
   GRADIO_OPENVOICE
+  XTTS_LOCAL
 }
 
 enum VoiceCloneStatus {

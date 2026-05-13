@@ -204,23 +204,12 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     utteranceRef.current = null;
   }, []);
 
-  // Fallback: speak using the browser's Web Speech API silently
-  const speakWithBrowserFallback = useCallback((text: string, onEnd: () => void) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) { onEnd(); return; }
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    const voice = availableVoicesRef.current.find(v => v.id === selectedVoiceIdRef.current);
-    if (voice) {
-      u.voice = voice.systemVoice;
-      u.lang = voice.lang;
-    } else {
-      u.lang = languageRef.current === "es" ? "es-CO" : languageRef.current === "pt" ? "pt-BR" : "en-US";
-    }
-    u.rate = 0.92;
-    u.onend = onEnd;
-    u.onerror = onEnd;
-    utteranceRef.current = u;
-    window.speechSynthesis.speak(u);
+  const notifyVoicePlaybackError = useCallback((event: NarrationEvent, error?: unknown) => {
+    const message = error instanceof Error ? error.message : "Voice generation failed";
+    console.warn("[VoiceNarrator]", message);
+    window.dispatchEvent(new CustomEvent("caliguia:voice-playback-error", {
+      detail: { reason: "voice-generation-failed", narration: event, message },
+    }));
   }, []);
 
   const playNext = useCallback(() => {
@@ -257,37 +246,39 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         const formData = new FormData();
         formData.append("file", new File([sample], "caliguia-reference-voice.webm", { type: sample.type || "audio/webm" }));
         formData.append("text", event.text);
-        formData.append("style", "default");
-        return fetch("/api/gradio/speech", {
+        formData.append("language", languageRef.current);
+        return fetch("/api/voice/speech", {
           method: "POST",
           body: formData,
         });
       })
       .then(async res => {
-        if (!res.ok) throw new Error("OpenVoice speech failed");
+        if (!res.ok) {
+          const errorBody = await res.json().catch(() => null);
+          throw new Error(errorBody?.message || errorBody?.error || `Voice generation failed (${res.status})`);
+        }
         const audioBlob = await res.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         audioUrlRef.current = audioUrl;
         const audio = new Audio(audioUrl);
         audioRef.current = audio;
         audio.onended = finishAndContinue;
-        audio.onerror = () => {
+        audio.onerror = error => {
           if (audioUrlRef.current) {
             URL.revokeObjectURL(audioUrlRef.current);
             audioUrlRef.current = null;
           }
-          // Gradio audio failed to play — fall back to browser TTS silently
-          speakWithBrowserFallback(event.text, finishAndContinue);
+          notifyVoicePlaybackError(event, error);
+          finishAndContinue();
         };
         return audio.play();
       })
-      .catch(() => {
+      .catch(error => {
         if (!isPlayingRef.current) return;
-        // Gradio Space is unavailable — fall back to browser TTS without
-        // touching gradioVoiceReady so the user is NOT asked to re-record.
-        speakWithBrowserFallback(event.text, finishAndContinue);
+        notifyVoicePlaybackError(event, error);
+        finishAndContinue();
       });
-  }, [muted, gradioVoiceReady, speakWithBrowserFallback]); // Uses refs for browser voices/selectedId/language
+  }, [muted, gradioVoiceReady, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {

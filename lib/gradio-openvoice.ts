@@ -17,6 +17,39 @@ function getOpenVoiceEndpoint() {
   return process.env.GRADIO_OPENVOICE_ENDPOINT || DEFAULT_ENDPOINT;
 }
 
+function getHuggingFaceToken() {
+  return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || "";
+}
+
+function getOpenVoiceDefaultStyle() {
+  return process.env.GRADIO_OPENVOICE_STYLE || "default";
+}
+
+function findErrorText(value: unknown): string {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    return value.includes("[ERROR]") || value.includes("[HTTP ERROR]") ? value : "";
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findErrorText(item);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      const found = findErrorText(item);
+      if (found) return found;
+    }
+  }
+
+  return "";
+}
+
 function findAudioUrl(value: unknown): string {
   if (!value) return "";
 
@@ -51,10 +84,14 @@ export async function createOpenVoiceSpeech(params: {
   text: string;
   style?: string;
 }) {
-  const app = await Client.connect(getOpenVoiceSpace());
+  const token = getHuggingFaceToken();
+  const app = await Client.connect(
+    getOpenVoiceSpace(),
+    token ? { token: token as `hf_${string}` } : undefined
+  );
   const result = await app.predict(getOpenVoiceEndpoint(), [
     params.text,
-    params.style || "es_default",
+    params.style || getOpenVoiceDefaultStyle(),
     handle_file(params.file),
     1.0,
     true,
@@ -62,7 +99,8 @@ export async function createOpenVoiceSpeech(params: {
 
   const audioUrl = findAudioUrl(result.data);
   if (!audioUrl) {
-    throw new Error(`OpenVoice did not return an audio URL: ${JSON.stringify(result.data)}`);
+    const errorText = findErrorText(result.data);
+    throw new Error(errorText || `OpenVoice did not return an audio URL: ${JSON.stringify(result.data)}`);
   }
 
   const audioResponse = await fetch(audioUrl);
