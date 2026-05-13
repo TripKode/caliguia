@@ -35,6 +35,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const voiceCount = await prisma.voiceClone.count({
+      where: { userId },
+    });
+
+    if (voiceCount >= 3) {
+      return NextResponse.json({ error: "Límite máximo de 3 voces alcanzado" }, { status: 403 });
+    }
+
     const voiceKey = crypto.randomUUID();
     const providerVoiceId = `xtts-local:${userId}:${voiceKey}`;
     const voiceName = `CALIGUIA_UID_${userId}_${voiceKey.slice(0, 8)}`;

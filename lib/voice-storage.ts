@@ -1,6 +1,8 @@
 import { Storage } from "@google-cloud/storage";
 
-const storage = new Storage();
+const storage = new Storage({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "tripcode-internal",
+});
 
 const VOICE_BUCKET =
   process.env.CALIGUIA_VOICE_BUCKET ||
@@ -61,5 +63,9 @@ export async function uploadVoiceSample(params: {
 export async function downloadVoiceSample(objectName: string) {
   const [bytes] = await requireVoiceBucket().file(objectName).download();
   return bytes;
+}
+
+export async function deleteVoiceSample(objectName: string) {
+  await requireVoiceBucket().file(objectName).delete({ ignoreNotFound: true });
 }
 

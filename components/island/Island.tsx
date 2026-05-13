@@ -12,6 +12,7 @@ import {
 } from "../providers/ExperienceProvider";
 import { useMap } from "@/hooks/UseMap";
 import { saveActiveVoiceSample } from "@/components/providers/voiceSampleStore";
+import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Message {
@@ -96,6 +97,13 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [voiceReadingText, setVoiceReadingText] = useState(() => getFallbackVoiceReading("es"));
   const [isGeneratingVoiceText, setIsGeneratingVoiceText] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [userVoices, setUserVoices] = useState<any[]>([]);
+  const [isLoadingVoices, setIsLoadingVoices] = useState(true);
+  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
+  const [openVoiceMenuId, setOpenVoiceMenuId] = useState<string | null>(null);
+  const [voiceIdToReplace, setVoiceIdToReplace] = useState<string | null>(null);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const isAuthenticated = status === "authenticated";
   const isAuthLoading = status === "loading";
   const userName = session?.user?.name || session?.user?.email || "Usuario";
@@ -177,6 +185,33 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     };
   }, []);
 
+  const fetchVoices = useCallback(async () => {
+    if (status !== "authenticated") {
+      setIsLoadingVoices(false);
+      return;
+    }
+    
+    setIsLoadingVoices(true);
+    try {
+      const res = await fetch("/api/users/me/voices");
+      const data = await res.json();
+      if (data.voices) {
+        setUserVoices(data.voices);
+        setActiveVoiceId(data.activeVoiceId);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingVoices(false);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (showVoiceDropdown) {
+      fetchVoices();
+    }
+  }, [showVoiceDropdown, fetchVoices]);
+
   useEffect(() => {
     setVoiceReadingText(getFallbackVoiceReading(language));
   }, [language]);
@@ -237,6 +272,49 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     }
   }, [setLanguage, status]);
 
+  const playVoiceSample = useCallback((voiceId: string) => {
+    if (playingVoiceId === voiceId) {
+      audioRef.current?.pause();
+      setPlayingVoiceId(null);
+      return;
+    }
+
+    // Cleanup previous instance
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.src = "";
+      audioRef.current.load(); // Force release
+    }
+
+    console.log(`[Island] Playing voice sample: ${voiceId}`);
+    const audio = new Audio();
+    
+    audio.onended = () => {
+      console.log("[Island] Audio playback finished");
+      setPlayingVoiceId(null);
+    };
+    audio.onerror = () => {
+      // Only handle error if this is the current active audio
+      if (audioRef.current === audio) {
+        setPlayingVoiceId(null);
+        console.error("[Island] Audio playback error:", audio.error);
+      }
+    };
+
+    audio.src = `/api/users/me/voices/${voiceId}/audio?t=${Date.now()}`;
+    audioRef.current = audio;
+    setPlayingVoiceId(voiceId);
+
+    audio.play().catch(e => {
+      if (audioRef.current === audio) {
+        console.error("[Island] Play failed:", e);
+        setPlayingVoiceId(null);
+      }
+    });
+  }, [playingVoiceId]);
+
   // Sync internal state with external prop or fallback to local
   const [localMuted, setLocalMuted] = useState(false);
   const isMuted = externalMuted !== undefined ? externalMuted : localMuted;
@@ -272,6 +350,16 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     const userId = getOrCreateUserId();
     await saveActiveVoiceSample(audioBlob);
 
+    // If we are re-recording, delete the old voice just before creating the new one
+    if (voiceIdToReplace) {
+      try {
+        await fetch(`/api/users/me/voices/${voiceIdToReplace}`, { method: "DELETE" });
+        setVoiceIdToReplace(null); // Clear after deletion
+      } catch (err) {
+        console.error("Failed to delete voice during replacement", err);
+      }
+    }
+
     const formData = new FormData();
     formData.append("file", new File([audioBlob], "caliguia-reference-voice.webm", { type: audioBlob.type || "audio/webm" }));
     formData.append("userId", session?.user?.id || userId);
@@ -291,7 +379,8 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     setVoiceCloneStatus("ready");
     setVoiceCloneMessage(t("voiceReady"));
     setShowVoiceSetupModal(false);
-  }, [getOrCreateUserId, session?.user?.id, userName]);
+    fetchVoices();
+  }, [getOrCreateUserId, session?.user?.id, userName, fetchVoices, voiceIdToReplace]);
 
   const stopVoiceRecording = useCallback(() => {
     mediaRecorderRef.current?.stop();
@@ -524,16 +613,17 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                     </p>
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={() => {
                         setShowVoiceDropdown(false);
                         setShowVoiceSetupModal(true);
                       }}
-                      disabled={voiceCloneStatus === "uploading" || voiceCloneStatus === "recording"}
-                      className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-black transition-all active:scale-[0.98] disabled:cursor-wait disabled:opacity-70 ${
+                      disabled={voiceCloneStatus === "uploading" || voiceCloneStatus === "recording" || userVoices.length >= 3}
+                      className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-black transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 ${
                         voiceCloneStatus === "recording"
                           ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
-                          : "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
+                          : userVoices.length >= 3 
+                            ? "bg-zinc-200 text-zinc-500" 
+                            : "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
                       }`}
                     >
                       {voiceCloneStatus === "uploading" ? (
@@ -546,19 +636,157 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                           <path d="M8 23h8" />
                         </svg>
                       )}
-                      {voiceCloneStatus === "recording" ? t("recording", { time: `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}` }) : t("generateVoice")}
+                      {voiceCloneStatus === "recording" 
+                        ? t("recording", { time: `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}` }) 
+                        : userVoices.length >= 3 
+                          ? "Límite de 3 voces" 
+                          : t("generateVoice")
+                      }
                     </button>
-                    <div className="mt-2 min-h-9 rounded-xl bg-zinc-50 px-3 py-2 text-center">
-                      <p className={`text-[11px] font-bold ${
-                        voiceCloneStatus === "ready" ? "text-emerald-600" :
-                        voiceCloneStatus === "error" ? "text-red-500" :
-                        "text-zinc-500"
-                      }`}>
-                        {voiceCloneStatus === "recording"
-                          ? `Grabando ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`
-                          : voiceCloneMessage || t("voiceHint")}
-                      </p>
-                    </div>
+                    {isLoadingVoices ? (
+                      <div className="mt-2 space-y-2 px-1">
+                        <div className="h-10 w-full animate-pulse rounded-xl bg-zinc-100" />
+                        <div className="h-20 w-full animate-pulse rounded-xl bg-zinc-50" />
+                      </div>
+                    ) : userVoices.length > 0 ? (
+                      <div className="mt-2 rounded-xl border border-black/5 bg-zinc-50 p-2">
+                        <AnimatePresence mode="wait">
+                          {openVoiceMenuId ? (
+                            <motion.div
+                              key="options"
+                              initial={{ opacity: 0, x: 10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, x: -10 }}
+                              className="flex flex-col"
+                            >
+                              <div className="flex items-center justify-between mb-3">
+                                <button 
+                                  onClick={() => setOpenVoiceMenuId(null)} 
+                                  className="flex items-center gap-1 text-[10px] font-black text-blue-600 hover:text-blue-700"
+                                >
+                                  <ChevronLeft className="w-3 h-3" /> VOLVER
+                                </button>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Opciones de voz</span>
+                              </div>
+                              
+                              <div className="grid grid-cols-1 gap-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playVoiceSample(openVoiceMenuId);
+                                  }}
+                                  className="flex items-center gap-2 rounded-lg bg-white border border-black/5 px-3 py-2.5 text-[11px] font-bold text-zinc-600 shadow-sm hover:bg-zinc-50"
+                                >
+                                  {playingVoiceId === openVoiceMenuId ? (
+                                    <div className="w-3.5 h-3.5 flex items-center justify-center gap-[1px]">
+                                      <motion.div animate={{ height: [4, 10, 4] }} transition={{ repeat: Infinity, duration: 0.5 }} className="w-[2px] bg-blue-500" />
+                                      <motion.div animate={{ height: [10, 4, 10] }} transition={{ repeat: Infinity, duration: 0.5, delay: 0.1 }} className="w-[2px] bg-blue-500" />
+                                      <motion.div animate={{ height: [4, 10, 4] }} transition={{ repeat: Infinity, duration: 0.5, delay: 0.2 }} className="w-[2px] bg-blue-500" />
+                                    </div>
+                                  ) : (
+                                    <Play className="w-3.5 h-3.5 text-blue-500" />
+                                  )}
+                                  {playingVoiceId === openVoiceMenuId ? "Detener" : "Reproducir"}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const idToReplace = openVoiceMenuId;
+                                    setVoiceIdToReplace(idToReplace);
+                                    setShowVoiceDropdown(false);
+                                    setShowVoiceSetupModal(true);
+                                    setOpenVoiceMenuId(null);
+                                  }}
+                                  className="flex items-center gap-2 rounded-lg bg-white border border-black/5 px-3 py-2.5 text-[11px] font-bold text-zinc-600 shadow-sm hover:bg-zinc-50"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5 text-emerald-500" /> Regrabar
+                                </button>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const idToDelete = openVoiceMenuId;
+                                    setOpenVoiceMenuId(null);
+                                    await fetch(`/api/users/me/voices/${idToDelete}`, { method: "DELETE" });
+                                    fetchVoices();
+                                  }}
+                                  className="flex items-center gap-2 rounded-lg bg-white border border-black/5 px-3 py-2.5 text-[11px] font-bold text-red-600 shadow-sm hover:bg-red-50"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Eliminar
+                                </button>
+                                <div className="h-px bg-black/5 my-1" />
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const voice = userVoices.find(v => v.id === openVoiceMenuId);
+                                    if (voice) {
+                                      setActiveVoiceId(voice.providerVoiceId);
+                                      await fetch("/api/users/me/voices/active", {
+                                          method: "POST",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ providerVoiceId: voice.providerVoiceId })
+                                      });
+                                    }
+                                  }}
+                                  className="flex items-center justify-between rounded-lg bg-white border border-black/5 px-3 py-2.5 text-[11px] font-bold text-zinc-600 shadow-sm hover:bg-zinc-50"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Check className={`w-3.5 h-3.5 ${activeVoiceId === userVoices.find(v => v.id === openVoiceMenuId)?.providerVoiceId ? "text-blue-500" : "text-zinc-300"}`} />
+                                    <span>Voz Principal</span>
+                                  </div>
+                                  <div className={`w-6 h-3.5 rounded-full flex items-center transition-colors px-0.5 ${activeVoiceId === userVoices.find(v => v.id === openVoiceMenuId)?.providerVoiceId ? "bg-blue-500" : "bg-zinc-300"}`}>
+                                    <div className={`w-2.5 h-2.5 rounded-full bg-white transition-transform ${activeVoiceId === userVoices.find(v => v.id === openVoiceMenuId)?.providerVoiceId ? "translate-x-2.5" : "translate-x-0"}`} />
+                                  </div>
+                                </button>
+                              </div>
+                            </motion.div>
+                          ) : (
+                            <motion.div
+                              key="list"
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, x: 10 }}
+                              className="flex flex-col gap-1"
+                            >
+                              <p className="mb-1 px-1.5 text-[9px] font-black uppercase tracking-widest text-zinc-400">Tus Voces</p>
+                              {userVoices.map(voice => (
+                                <div
+                                  key={voice.id}
+                                  className={`relative flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] font-bold transition-all ${
+                                    activeVoiceId === voice.providerVoiceId ? "bg-blue-100 text-blue-700" : "text-zinc-600 hover:bg-zinc-200/50"
+                                  }`}
+                                >
+                                  <span className="truncate pr-2">
+                                    {new Date(voice.createdAt).toLocaleDateString()} - Voz {voice.providerVoiceId.slice(-4)}
+                                  </span>
+                                  
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenVoiceMenuId(voice.id);
+                                    }}
+                                    className="p-1 rounded-md hover:bg-black/10 transition-colors"
+                                  >
+                                    <MoreVertical className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    ) : (
+                      <div className="mt-2 min-h-9 rounded-xl bg-zinc-50 px-3 py-2 text-center">
+                        <p className={`text-[11px] font-bold ${
+                          voiceCloneStatus === "ready" ? "text-emerald-600" :
+                          voiceCloneStatus === "error" ? "text-red-500" :
+                          "text-zinc-500"
+                        }`}>
+                          {voiceCloneStatus === "recording"
+                            ? `Grabando ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`
+                            : voiceCloneMessage || t("voiceHint")}
+                        </p>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Selector de frecuencia de charla (Verbosidad) */}
