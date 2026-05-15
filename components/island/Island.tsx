@@ -34,7 +34,7 @@ interface AIFloatingIslandProps {
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 const BAR_COUNT = 5;
-const VOICE_SAMPLE_SECONDS = 18;
+const VOICE_SAMPLE_SECONDS = 12;
 const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; flag: string; name: string }> = [
   { code: "es", label: "ES", flag: "co", name: "Español" },
   { code: "en", label: "EN", flag: "us", name: "Inglés" },
@@ -96,7 +96,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [profileSaveStatus, setProfileSaveStatus] = useState<"idle" | "saved" | "error">("idle");
   const [voiceCloneStatus, setVoiceCloneStatus] = useState<"idle" | "recording" | "uploading" | "generating" | "ready" | "error">("idle");
   const [voiceCloneMessage, setVoiceCloneMessage] = useState("");
-  const [voiceReadingText, setVoiceReadingText] = useState(() => getFallbackVoiceReading("es"));
+  const [voiceReadingText, setVoiceReadingText] = useState("");
   const [isGeneratingVoiceText, setIsGeneratingVoiceText] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [userVoices, setUserVoices] = useState<any[]>([]);
@@ -139,7 +139,12 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       languageConfigured: session?.languageConfigured,
     };
     updateSessionRef.current = update;
-  }, [session?.languageConfigured, session?.preferredLanguage, update]);
+    
+    // Initialize voice reading text with the correct language
+    if (!voiceReadingText) {
+      setVoiceReadingText(getFallbackVoiceReading(language));
+    }
+  }, [session?.languageConfigured, session?.preferredLanguage, update, language, voiceReadingText]);
 
   useEffect(() => {
     let cancelled = false;

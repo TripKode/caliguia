@@ -5,8 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { downloadVoiceSample } from "@/lib/voice-storage";
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
-const MAX_TTS_CHARS = 360;
-const TARGET_TTS_CHARS = 220;
+const MAX_TTS_CHARS = 1000;
+const TARGET_TTS_CHARS = 900;
 const SUPPORTED_LANGUAGES = new Set(["es", "en", "pt"]);
 
 function isAudioFile(file: File) {
@@ -24,12 +24,12 @@ function compactTtsText(text: string) {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length <= TARGET_TTS_CHARS) return clean;
 
-  const sentenceMatch = clean.match(/^.{1,300}?[.!?…](?:\s|$)/);
+  const sentenceMatch = clean.match(/^.{1,800}?[.!?…](?:\s|$)/);
   if (sentenceMatch?.[0]) return sentenceMatch[0].trim();
 
   const clipped = clean.slice(0, TARGET_TTS_CHARS);
   const lastSpace = clipped.lastIndexOf(" ");
-  const safeClip = clipped.slice(0, lastSpace > 180 ? lastSpace : TARGET_TTS_CHARS).replace(/[,;:]$/, "");
+  const safeClip = clipped.slice(0, lastSpace > 600 ? lastSpace : TARGET_TTS_CHARS).replace(/[,;:]$/, "");
   return `${safeClip}.`;
 }
 

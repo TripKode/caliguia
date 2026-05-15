@@ -126,6 +126,7 @@ function MapContent() {
         toggle3D
     } = useMap();
 
+    const { language } = useExperience();
     const [is3DActive, setIs3DActive] = useState(true); // El mapa inicia en 3D por defecto
     const [conversation, setConversation] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
     const [userQuestion, setUserQuestion] = useState("");
@@ -403,21 +404,49 @@ function MapContent() {
 
                 setConversation(initialMessages);
 
-                // Greeting logic: if NO previous messages, say hi in the right language
+                // Greeting logic: if NO previous messages, say hi with landmark info
                 if (initialMessages.length === 0 && speak) {
-                    const greeting = t("chatGreeting");
-                    speak({ 
-                        type: "info", 
-                        text: greeting, 
-                        title: expandedLandmark, 
-                        icon: "✨" 
-                    });
+                    const landmark = localLandmarks.find(l => l.name === expandedLandmark);
+                    if (landmark) {
+                        const response = await fetchNarration(landmark.prompt, "chat", language || "es");
+                        if (response) {
+                            speak({ 
+                                type: "chat", 
+                                text: response, 
+                                title: expandedLandmark, 
+                                icon: "✨" 
+                            });
+                            // Add to local state for chat UI
+                            const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
+                            setConversation([aiMsg]);
+                            
+                            // Save to session/DB as the first message
+                            if (authStatus === "authenticated") {
+                                fetch('/api/users/me/chat-history', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ landmarkName: expandedLandmark, messages: [aiMsg] })
+                                });
+                            } else {
+                                sessionStorage.setItem(`chat_${expandedLandmark}`, JSON.stringify([aiMsg]));
+                            }
+                        }
+                    } else {
+                        // Fallback if landmark not found
+                        const greeting = t("chatGreeting");
+                        speak({ 
+                            type: "info", 
+                            text: greeting, 
+                            title: expandedLandmark, 
+                            icon: "✨" 
+                        });
+                    }
                 }
             };
             
             loadAndGreet();
         }
-    }, [expandedLandmark, authStatus, speak, t]);
+    }, [expandedLandmark, authStatus, speak, t, language, localLandmarks]);
 
     useEffect(() => {
         if (expandedLandmark && currentNarration && currentNarration.text) {
@@ -431,7 +460,6 @@ function MapContent() {
     }, [expandedLandmark, currentNarration]);
 
     const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
-    const { language } = useExperience();
     const tourStartMessage = useMemo(() => getDailyTourStartMessage(language), [language]);
     const [isARScanning, setIsARScanning] = useState(false);
     const isAuthenticated = authStatus === "authenticated";
