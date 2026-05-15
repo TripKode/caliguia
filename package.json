@@ -7,7 +7,6 @@
     "dev:webpack": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "voice:worker": "python -m uvicorn app.main:app --app-dir worker --host 127.0.0.1 --port 8010",
     "lint": "eslint"
   },
   "dependencies": {

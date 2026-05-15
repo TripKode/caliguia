@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
   const file = form?.get("file");
   const formUserId = form?.get("userId");
   const displayName = form?.get("displayName");
+  const referenceText = form?.get("referenceText");
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
     const voiceName = `CALIGUIA_UID_${userId}_${voiceKey.slice(0, 8)}`;
     const sampleMimeType = file.type || "audio/webm";
     const sampleFileName = file.name || "caliguia-reference-voice.webm";
+    const cleanReferenceText = typeof referenceText === "string" ? referenceText.replace(/\s+/g, " ").trim() : "";
     const objectName = buildVoiceObjectName({
       userId,
       voiceId: voiceKey,
@@ -90,7 +92,9 @@ export async function POST(req: NextRequest) {
           bucketEnv: "CALIGUIA_VOICE_BUCKET",
           objectName,
           voiceKey,
-          note: "XTTS local uses this saved GCS voice sample; no remote voice_id is generated.",
+          referenceText: cleanReferenceText || null,
+          accent: "caleño neutro humano natural",
+          note: "F5-TTS local uses this saved GCS voice sample and reference text; no remote voice_id is generated.",
         },
       },
     });

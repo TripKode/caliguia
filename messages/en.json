@@ -33,7 +33,29 @@
     "talkFrequency": "Talk frequency",
     "much": "High",
     "normal": "Normal",
-    "little": "Low"
+    "little": "Low",
+    "interestCultura": "🏛️ Architecture & Heritage",
+    "interestGastronomia": "🥘 Local Gastronomy",
+    "interestSalsa": "💃 Salsa & Dancing",
+    "interestNaturaleza": "🌿 Parks & Nature",
+    "interestCompras": "🛍️ Shopping & Crafts",
+    "interestArte": "🎨 Art & Design",
+    "interestHistoria": "📜 History & Museums",
+    "interestBebidas": "🥤 Local Drinks",
+    "styleCaminante": "🚶 Walker",
+    "styleCaminanteDesc": "On foot",
+    "styleRelajado": "🚗 Relaxed",
+    "styleRelajadoDesc": "Comfortable",
+    "vibeTranquilo": "Relaxed",
+    "vibeExplorador": "Curious",
+    "vibeFiesta": "Energetic",
+    "savingPreferences": "Saving...",
+    "preferencesSaved": "Preferences saved!",
+    "preferencesError": "Could not save preferences",
+    "finishRecording": "Finish",
+    "arMode": "Augmented Reality",
+    "language": "Language",
+    "travelProfile": "Traveler profile"
   },
   "Map": {
     "enableLocationTitle": "Enable your location",
@@ -52,7 +74,15 @@
     "expandHint": "Tap 'Expand' so I can tell you a secret about this place...",
     "caliHeritage": "Cali Heritage",
     "customRoute": "Custom Route",
-    "drawCustomRoute": "Draw Custom Route"
+    "drawCustomRoute": "Draw Custom Route",
+    "askAIPlaceholder": "Ask anything...",
+    "destination": "Destination",
+    "viewRoute": "View Route",
+    "removeRoute": "Remove route",
+    "questionHistory": "What is its history?",
+    "questionNearby": "What is nearby?",
+    "questionHours": "What time do they close?",
+    "chatGreeting": "Hello! I'm your CaliGuide. Ask me anything about this place or pick one of the suggestions."
   },
   "Panel": {
     "local": "Local",
@@ -63,6 +93,7 @@
     "radius": "Radius",
     "scanningHistory": "Scanning history...",
     "viewRoute": "View Route",
+    "removeRoute": "Remove route",
     "expand": "Expand",
     "nothingHereTitle": "Nothing to see here",
     "nothingHereBody": "We haven't found historic landmarks near your current location.",
@@ -80,6 +111,9 @@
     "shareLocationForPlaces": "Share your location to see nearby businesses.",
     "noHotels": "No hotels found in this area.",
     "perNight": "Per night",
-    "allComunas": "The 22 Districts"
+    "allComunas": "The 22 Districts",
+    "itinerary": "Itinerary",
+    "stops": "{count} stops",
+    "finalDestination": "Final Destination"
   }
 }

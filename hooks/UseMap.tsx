@@ -244,6 +244,8 @@ export function UseHome() {
     const [verbosity, setVerbosity] = useState<VerbosityLevel>("normal");
     const [showZoneAlert, setShowZoneAlert] = useState(true);
     const [experienceMode, setExperienceMode] = useState<"map" | "ar">("map");
+    const [activeRouteLandmark, setActiveRouteLandmark] = useState<string | null>(null);
+    const [routeInterestPoints, setRouteInterestPoints] = useState<any[]>([]);
 
     // ── 2. REFS ──
     const webcamRef = useRef<Webcam>(null);
@@ -979,15 +981,19 @@ export function UseHome() {
         experienceMode, setExperienceMode,
         webcamRef, mapRef, mapInstance, routePolylineRef,
         requestLocation, swapCameraZoom, applyCameraZoom, onDrawerPointerDown, onDrawerPointerMove, onDrawerPointerEnd,
+        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, voiceReady, aiContext, selectComuna,
+        selectedVoiceId, availableVoices, setVoice, verbosity, setVerbosity,
+        previewVoice,
         toggle3D: () => {
             if (mapInstance.current) {
                 const currentTilt = mapInstance.current.getTilt();
                 mapInstance.current.setTilt(currentTilt === 45 ? 0 : 45);
             }
         },
-        narratorSpeaking, currentNarration, experienceLog, unlockSpeech, speechUnlocked, voicePreference, voiceReady, aiContext, selectComuna,
-        selectedVoiceId, availableVoices, setVoice, verbosity, setVerbosity,
-        previewVoice,
+        activeRouteLandmark,
+        setActiveRouteLandmark,
+        routeInterestPoints,
+        setRouteInterestPoints,
         speak
     };
 }

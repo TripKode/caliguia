@@ -25,6 +25,7 @@ export async function GET() {
       languageConfigured: true,
       activeVoiceProvider: true,
       activeProviderVoiceId: true,
+      travelPreferences: true,
     },
   });
 
@@ -45,23 +46,38 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => null);
-  const preferredLanguage = body?.preferredLanguage;
+  const { preferredLanguage, activeProviderVoiceId, travelPreferences } = body || {};
 
-  if (!isPreferredLanguage(preferredLanguage)) {
-    return NextResponse.json({ error: "Invalid preferredLanguage" }, { status: 400 });
+  const data: any = {};
+  if (preferredLanguage) {
+    if (!isPreferredLanguage(preferredLanguage)) {
+      return NextResponse.json({ error: "Invalid preferredLanguage" }, { status: 400 });
+    }
+    data.preferredLanguage = preferredLanguage;
+    data.languageConfigured = true;
+  }
+
+  if (activeProviderVoiceId !== undefined) {
+    data.activeProviderVoiceId = activeProviderVoiceId;
+  }
+
+  if (travelPreferences !== undefined && typeof travelPreferences === "object" && travelPreferences !== null) {
+    data.travelPreferences = travelPreferences;
+  }
+
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
   const user = await (prisma.user as any).update({
     where: userId ? { id: userId } : { email },
-    data: {
-      preferredLanguage,
-      languageConfigured: true,
-    },
+    data,
     select: {
       preferredLanguage: true,
       languageConfigured: true,
       activeVoiceProvider: true,
       activeProviderVoiceId: true,
+      travelPreferences: true,
     },
   });
 

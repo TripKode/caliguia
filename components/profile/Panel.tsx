@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { 
-    Landmark as LandmarkIcon, 
-    Mic, 
-    Flower, 
-    AlertTriangle, 
-    MapPin, 
-    Star, 
-    ChevronRight, 
+import {
+    Landmark as LandmarkIcon,
+    Mic,
+    Flower,
+    AlertTriangle,
+    MapPin,
+    Star,
+    ChevronRight,
     ChevronLeft,
     Clock,
     User,
@@ -22,7 +22,11 @@ import {
     ShieldAlert,
     Plus,
     Minus,
-    Bed
+    Bed,
+    Route,
+    Flag,
+    Circle,
+    RefreshCw
 } from "lucide-react";
 import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
@@ -47,6 +51,7 @@ export function Panel() {
     const [hotels, setHotels] = useState<any[]>([]);
     const [loadingHotels, setLoadingHotels] = useState(false);
     const [hotelsPage, setHotelsPage] = useState(1);
+    const [isItineraryExpanded, setIsItineraryExpanded] = useState(true);
     const {
         activeTab,
         setActiveTab,
@@ -69,8 +74,12 @@ export function Panel() {
         setShowZoneAlert,
         comunas: CALI_COMUNAS,
         setCurrentComuna,
-        selectComuna,
+        setActiveRouteLandmark,
+        activeRouteLandmark,
+        setRouteInterestPoints,
+        routeInterestPoints,
         speak,
+        selectComuna,
     } = useMap();
 
     useEffect(() => {
@@ -95,6 +104,203 @@ export function Panel() {
                 .finally(() => setLoadingHotels(false));
         }
     }, [activeTab, currentComuna]);
+
+    const generateRoute = async (landmark: any, shuffle = false) => {
+        if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
+
+        // Clear existing before showing new
+        setActiveRouteLandmark(null);
+        setRouteInterestPoints([]);
+        window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
+        if (routePolylineRef.current) {
+            routePolylineRef.current.setVisible(false);
+            routePolylineRef.current.setPath([]);
+        }
+
+        // --- Clases de Overlays Dinámicos (re-declaradas para acceso en contexto) ---
+        class InterestOverlay extends google.maps.OverlayView {
+            private div: HTMLDivElement | null = null;
+            private isExpanded = false;
+            constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map, private name: string, private type: string) {
+                super();
+                this.setMap(map);
+                window.addEventListener("caliguia:clear-route-overlays", () => this.setMap(null), { once: true });
+            }
+            onAdd() {
+                this.div = document.createElement("div");
+                this.div.style.position = "absolute";
+                this.div.style.cursor = "pointer";
+                this.div.style.zIndex = "997";
+                this.render();
+                this.div.onclick = () => {
+                    this.isExpanded = !this.isExpanded;
+                    this.render();
+                };
+                this.getPanes()!.floatPane.appendChild(this.div);
+            }
+            render() {
+                if (!this.div) return;
+                const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
+                if (this.isExpanded) {
+                    this.div.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
+                            <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
+                            <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
+                        </div>
+                    `;
+                } else {
+                    this.div.innerHTML = `
+                        <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">
+                            ${icon}
+                        </div>
+                    `;
+                }
+            }
+            draw() {
+                const projection = this.getProjection();
+                if (!projection || !this.div) return;
+                const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                if (p) {
+                    this.div.style.left = p.x + "px";
+                    this.div.style.top = p.y + "px";
+                    this.div.style.transform = "translateX(-50%) translateY(-50%)";
+                }
+            }
+            onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+        }
+
+        class DestinationOverlay extends google.maps.OverlayView {
+            private div: HTMLDivElement | null = null;
+            constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map) {
+                super();
+                this.setMap(map);
+                window.addEventListener("caliguia:clear-route-overlays", () => this.setMap(null), { once: true });
+            }
+            onAdd() {
+                this.div = document.createElement("div");
+                this.div.style.position = "absolute";
+                this.div.style.zIndex = "998";
+                this.div.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
+                        <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
+                        <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">Destino</span>
+                    </div>
+                    <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
+                `;
+                this.getPanes()!.floatPane.appendChild(this.div);
+            }
+            draw() {
+                const projection = this.getProjection();
+                if (!projection || !this.div) return;
+                const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                if (p) {
+                    this.div.style.left = p.x + "px";
+                    this.div.style.top = p.y + "px";
+                    this.div.style.transform = "translateX(-50%) translateY(-100%)";
+                }
+            }
+            onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+        }
+
+        // 1. Obtener perfil
+        const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
+        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+
+        const waypoints: google.maps.DirectionsWaypoint[] = [];
+        const interestPoints: any[] = [];
+
+        const padding = shuffle ? 0.004 : 0.002;
+        const minLat = Math.min(coords.lat, landmark.lat) - padding;
+        const maxLat = Math.max(coords.lat, landmark.lat) + padding;
+        const minLng = Math.min(coords.lng, landmark.lng) - padding;
+        const maxLng = Math.max(coords.lng, landmark.lng) + padding;
+
+        let relevantLandmarks = localLandmarks.filter(l => {
+            const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
+            if (!inBox || l.name.toLowerCase() === landmark.name.toLowerCase()) return false;
+            const interests = userProfile.interests;
+            const n = l.name.toLowerCase();
+            const d = (l.description || "").toLowerCase();
+            return (
+                (interests.includes('cultura') && (d.includes('heritage') || d.includes('architecture') || d.includes('patrimonio'))) ||
+                (interests.includes('naturaleza') && (d.includes('park') || d.includes('parque') || d.includes('river'))) ||
+                (interests.includes('salsa') && (n.includes('salsa') || n.includes('dance')))
+            );
+        });
+
+        if (shuffle) {
+            // Priorizar lugares que NO estaban en la ruta anterior
+            const currentNames = new Set(routeInterestPoints.map(p => p.name.toLowerCase()));
+            relevantLandmarks = [...relevantLandmarks].sort((a, b) => {
+                const aIn = currentNames.has(a.name.toLowerCase()) ? 1 : 0;
+                const bIn = currentNames.has(b.name.toLowerCase()) ? 1 : 0;
+                if (aIn !== bIn) return aIn - bIn;
+                return Math.random() - 0.5;
+            });
+        }
+
+        relevantLandmarks.slice(0, 5).forEach(l => {
+            waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
+            interestPoints.push(l);
+        });
+
+        const directionsService = new google.maps.DirectionsService();
+        directionsService.route(
+            {
+                origin: { lat: coords.lat, lng: coords.lng },
+                destination: { lat: landmark.lat, lng: landmark.lng },
+                waypoints: waypoints,
+                optimizeWaypoints: true,
+                travelMode: google.maps.TravelMode.WALKING,
+            },
+            (result, status) => {
+                if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
+                    // Estilo según perfil
+                    if (userProfile.style === 'caminante') {
+                        routePolylineRef.current.setOptions({
+                            strokeColor: "#3b82f6",
+                            strokeOpacity: 0,
+                            icons: [{
+                                icon: { path: google.maps.SymbolPath.CIRCLE, fillOpacity: 1, scale: 2.2, fillColor: "#3b82f6", strokeColor: "#ffffff", strokeWeight: 0.5 },
+                                offset: '0',
+                                repeat: '12px'
+                            }]
+                        });
+                    } else {
+                        routePolylineRef.current.setOptions({
+                            strokeColor: "#1e293b",
+                            strokeOpacity: 1,
+                            strokeWeight: 5,
+                            icons: []
+                        });
+                    }
+
+                    routePolylineRef.current.setPath(result.routes[0].overview_path);
+                    routePolylineRef.current.setVisible(true);
+                    const bounds = result.routes[0].bounds;
+                    mapInstance.current.fitBounds(bounds);
+
+                    // Añadir pines de interés (Iconos minimalistas)
+                    interestPoints.forEach(ip => {
+                        new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
+                    });
+
+                    // Añadir pin de DESTINO (Burbuja verde)
+                    new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
+
+                    setActiveRouteLandmark(landmark.name);
+                    setRouteInterestPoints(interestPoints);
+
+                    if (speak) {
+                        speak({ type: "info", text: `Ruta trazada. Toca los íconos azules para ver qué hay en tu camino.`, title: "Destino: " + landmark.name, icon: "🏁" });
+                    }
+                } else {
+                    const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
+                    window.open(url, '_blank');
+                }
+            }
+        );
+    };
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
@@ -150,6 +356,78 @@ export function Panel() {
                             </div>
                         </div>
 
+                        {activeRouteLandmark && routeInterestPoints.length > 0 && (
+                            <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                className={`px-5 ${isItineraryExpanded ? "py-4" : "py-2.5"} bg-zinc-50 border-b border-black/5 shrink-0 overflow-hidden`}
+                            >
+                                <div className={`flex items-center justify-between ${isItineraryExpanded ? "mb-3" : "mb-0"}`}>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600">
+                                            <Route size={14} strokeWidth={3} />
+                                        </div>
+                                        <h3 className="text-[11px] font-black uppercase tracking-widest text-zinc-500">{t("itinerary")}</h3>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <button
+                                            onClick={() => {
+                                                const target = localLandmarks.find(l => l.name === activeRouteLandmark);
+                                                if (target) generateRoute(target, true);
+                                            }}
+                                            className="p-1.5 rounded-full hover:bg-zinc-200 text-zinc-400 hover:text-blue-500 transition-colors"
+                                            title="Regenerar ruta"
+                                        >
+                                            <RefreshCw size={10} strokeWidth={3} />
+                                        </button>
+                                        <div className="flex items-center bg-emerald-100 rounded-full px-1 py-0.5">
+                                            <span className="text-[9px] font-bold px-1.5 text-emerald-700 uppercase tracking-tighter">
+                                                {t("stops", { count: routeInterestPoints.length + 1 })}
+                                            </span>
+                                            <button
+                                                onClick={() => setIsItineraryExpanded(!isItineraryExpanded)}
+                                                className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-700 hover:bg-emerald-500/30 transition-colors ml-0.5"
+                                            >
+                                                {isItineraryExpanded ? <Minus size={8} strokeWidth={4} /> : <Plus size={8} strokeWidth={4} />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <AnimatePresence>
+                                    {isItineraryExpanded && (
+                                        <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: "auto", opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            className="flex flex-col gap-2 relative pl-3 border-l-2 border-blue-200 ml-1.5"
+                                        >
+                                            {routeInterestPoints.map((point, i) => (
+                                                <div key={i} className="flex items-start gap-3 relative pb-1">
+                                                    <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
+                                                        <Circle size={8} className="text-blue-400 fill-blue-400" />
+                                                    </div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-[11px] font-bold text-zinc-800 leading-tight truncate">{point.name}</p>
+                                                        <p className="text-[9px] text-zinc-400 font-medium truncate uppercase tracking-tighter">{point.description || "Lugar de interés"}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            <div className="flex items-start gap-3 relative pt-1">
+                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-emerald-500 flex items-center justify-center shadow-sm z-10">
+                                                    <Flag size={8} className="text-white fill-white" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-[12px] font-black text-emerald-700 leading-tight truncate">{activeRouteLandmark}</p>
+                                                    <p className="text-[9px] text-emerald-600/70 font-bold uppercase tracking-tighter">{t("finalDestination")}</p>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </motion.div>
+                        )}
+
                         <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
                             <div className="flex flex-col gap-3">
                                 {loadingLandmarks && localLandmarks.length === 0 && (
@@ -180,191 +458,42 @@ export function Panel() {
 
                                                 <div className="flex items-center gap-2 mt-4">
                                                     <button
-                                                        onClick={async () => {
-                                                            if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
-                                                            
-                                                            // --- Clases de Overlays Dinámicos ---
-                                                            class InterestOverlay extends google.maps.OverlayView {
-                                                                private div: HTMLDivElement | null = null;
-                                                                private isExpanded = false;
-                                                                constructor(private pos: {lat: number, lng: number}, private map: google.maps.Map, private name: string, private type: string) { 
-                                                                    super(); 
-                                                                    this.setMap(map); 
+                                                        onClick={() => {
+                                                            if (activeRouteLandmark === landmark.name) {
+                                                                if (routePolylineRef.current) {
+                                                                    routePolylineRef.current.setVisible(false);
+                                                                    routePolylineRef.current.setPath([]);
                                                                 }
-                                                                onAdd() {
-                                                                    this.div = document.createElement("div");
-                                                                    this.div.style.position = "absolute";
-                                                                    this.div.style.cursor = "pointer";
-                                                                    this.div.style.zIndex = "997";
-                                                                    this.render();
-                                                                    this.div.onclick = () => {
-                                                                        this.isExpanded = !this.isExpanded;
-                                                                        this.render();
-                                                                    };
-                                                                    this.getPanes()!.floatPane.appendChild(this.div);
-                                                                }
-                                                                render() {
-                                                                    if (!this.div) return;
-                                                                    const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
-                                                                    if (this.isExpanded) {
-                                                                        this.div.innerHTML = `
-                                                                            <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
-                                                                                <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
-                                                                                <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
-                                                                            </div>
-                                                                        `;
-                                                                    } else {
-                                                                        this.div.innerHTML = `
-                                                                            <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">
-                                                                                ${icon}
-                                                                            </div>
-                                                                        `;
-                                                                    }
-                                                                }
-                                                                draw() {
-                                                                    const projection = this.getProjection();
-                                                                    if (!projection || !this.div) return;
-                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
-                                                                    if (p) {
-                                                                        this.div.style.left = p.x + "px";
-                                                                        this.div.style.top = p.y + "px";
-                                                                        this.div.style.transform = "translateX(-50%) translateY(-50%)";
-                                                                    }
-                                                                }
-                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+                                                                window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
+                                                                setActiveRouteLandmark(null);
+                                                                setRouteInterestPoints([]);
+                                                                return;
                                                             }
-
-                                                            class DestinationOverlay extends google.maps.OverlayView {
-                                                                private div: HTMLDivElement | null = null;
-                                                                constructor(private pos: {lat: number, lng: number}, private map: google.maps.Map) { 
-                                                                    super(); 
-                                                                    this.setMap(map); 
-                                                                }
-                                                                onAdd() {
-                                                                    this.div = document.createElement("div");
-                                                                    this.div.style.position = "absolute";
-                                                                    this.div.style.zIndex = "998";
-                                                                    this.div.innerHTML = `
-                                                                        <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
-                                                                            <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
-                                                                            <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">Destino</span>
-                                                                        </div>
-                                                                        <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
-                                                                    `;
-                                                                    this.getPanes()!.floatPane.appendChild(this.div);
-                                                                }
-                                                                draw() {
-                                                                    const projection = this.getProjection();
-                                                                    if (!projection || !this.div) return;
-                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
-                                                                    if (p) {
-                                                                        this.div.style.left = p.x + "px";
-                                                                        this.div.style.top = p.y + "px";
-                                                                        this.div.style.transform = "translateX(-50%) translateY(-100%)";
-                                                                    }
-                                                                }
-                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
-                                                            }
-
-                                                            // 1. Obtener perfil
-                                                            const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
-                                                            const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
-
-                                                            // 2. Limpiar pines anteriores (necesitamos acceder a routeMarkersRef o similar)
-                                                            // Nota: routeMarkersRef está en MapContent, aquí usaremos una limpieza manual si es posible
-                                                            // o confiaremos en la limpieza de MapContent al reiniciarse.
-                                                            
-                                                            const waypoints: google.maps.DirectionsWaypoint[] = [];
-                                                            const interestPoints: any[] = [];
-
-                                                            const minLat = Math.min(coords.lat, landmark.lat) - 0.002;
-                                                            const maxLat = Math.max(coords.lat, landmark.lat) + 0.002;
-                                                            const minLng = Math.min(coords.lng, landmark.lng) - 0.002;
-                                                            const maxLng = Math.max(coords.lng, landmark.lng) + 0.002;
-
-                                                            const relevantLandmarks = localLandmarks.filter(l => {
-                                                                const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
-                                                                if (!inBox) return false;
-                                                                const interests = userProfile.interests;
-                                                                const n = l.name.toLowerCase();
-                                                                const d = (l.description || "").toLowerCase();
-                                                                return (
-                                                                    (interests.includes('cultura') && (d.includes('heritage') || d.includes('architecture') || d.includes('patrimonio'))) ||
-                                                                    (interests.includes('naturaleza') && (d.includes('park') || d.includes('parque') || d.includes('river'))) ||
-                                                                    (interests.includes('salsa') && (n.includes('salsa') || n.includes('dance')))
-                                                                );
-                                                            });
-
-                                                            relevantLandmarks.slice(0, 5).forEach(l => {
-                                                                waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
-                                                                interestPoints.push(l);
-                                                            });
-
-                                                            const directionsService = new google.maps.DirectionsService();
-                                                            directionsService.route(
-                                                                {
-                                                                    origin: { lat: coords.lat, lng: coords.lng },
-                                                                    destination: { lat: landmark.lat, lng: landmark.lng },
-                                                                    waypoints: waypoints,
-                                                                    optimizeWaypoints: true,
-                                                                    travelMode: google.maps.TravelMode.WALKING,
-                                                                },
-                                                                (result, status) => {
-                                                                    if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
-                                                                        // Estilo según perfil
-                                                                        if (userProfile.style === 'caminante') {
-                                                                            routePolylineRef.current.setOptions({
-                                                                                strokeColor: "#3b82f6",
-                                                                                strokeOpacity: 0,
-                                                                                icons: [{
-                                                                                    icon: { path: google.maps.SymbolPath.CIRCLE, fillOpacity: 1, scale: 2.2, fillColor: "#3b82f6", strokeColor: "#ffffff", strokeWeight: 0.5 },
-                                                                                    offset: '0',
-                                                                                    repeat: '12px'
-                                                                                }]
-                                                                            });
-                                                                        } else {
-                                                                            routePolylineRef.current.setOptions({
-                                                                                strokeColor: "#1e293b",
-                                                                                strokeOpacity: 1,
-                                                                                strokeWeight: 5,
-                                                                                icons: []
-                                                                            });
-                                                                        }
-
-                                                                        routePolylineRef.current.setPath(result.routes[0].overview_path);
-                                                                        routePolylineRef.current.setVisible(true);
-                                                                        const bounds = result.routes[0].bounds;
-                                                                        mapInstance.current.fitBounds(bounds);
-
-                                                                        // Añadir pines de interés (Iconos minimalistas)
-                                                                        interestPoints.forEach(ip => {
-                                                                            new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
-                                                                        });
-
-                                                                        // Añadir pin de DESTINO (Burbuja verde)
-                                                                        new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
-
-                                                                        if (speak) {
-                                                                            speak({ type: "info", text: `Ruta trazada. Toca los íconos azules para ver qué hay en tu camino.`, title: "Destino: " + landmark.name, icon: "🏁" });
-                                                                        }
-                                                                    } else {
-                                                                        const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
-                                                                        window.open(url, '_blank');
-                                                                    }
-                                                                }
-                                                            );
+                                                            generateRoute(landmark);
                                                         }}
-                                                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 transition-all shadow-sm shadow-blue-500/20 active:scale-95"
+                                                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold transition-all shadow-sm active:scale-95 ${activeRouteLandmark === landmark.name
+                                                                ? "bg-zinc-800 text-white shadow-zinc-500/20"
+                                                                : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/20"
+                                                            }`}
                                                     >
-                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                                                        {t("viewRoute")}
+                                                        {activeRouteLandmark === landmark.name ? (
+                                                            <>
+                                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                                                                {t("removeRoute") || "Quitar ruta"}
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                                                                {t("viewRoute")}
+                                                            </>
+                                                        )}
                                                     </button>
 
                                                     <button
                                                         onClick={() => {
                                                             setCurrentImageIdx(0);
                                                             setExpandedLandmark(landmark.name);
-                                                            
+
                                                             if (speak) {
                                                                 const prompt = `El turista acaba de seleccionar el lugar histórico: ${landmark.name}. Cuéntale un dato histórico o arquitectónico súper fascinante y poco conocido de este lugar, como si fuera una gran anécdota.`;
                                                                 fetchNarration(prompt, "monument", language).then(text => {
@@ -446,7 +575,7 @@ export function Panel() {
                                         <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("radius")}</p>
                                         <p className="text-[13px] font-semibold text-blue-500">1-5 km</p>
                                     </div>
-                                    <button 
+                                    <button
                                         onClick={() => setIsPlacesExpanded(!isPlacesExpanded)}
                                         className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-lg transition-colors active:scale-95 shrink-0"
                                     >
@@ -460,104 +589,104 @@ export function Panel() {
                             <>
                                 {loadingPlaces && places.length === 0 && (
                                     <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
-                                {[1, 2, 3].map(i => (
-                                    <motion.div
-                                        key={i}
-                                        className="flex gap-3 items-center animate-pulse"
-                                        initial={{ opacity: 0, y: 8 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={{ delay: i * 0.04 }}
-                                    >
-                                        <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
-                                        <div className="flex flex-col gap-1.5 flex-1">
-                                            <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
-                                            <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
-                                        </div>
-                                    </motion.div>
-                                ))}
-                            </div>
-                        )}
-
-                        {(!loadingPlaces || places.length > 0) && (
-                            <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
-                                {places.length === 0 && (
-                                    <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
-                                        {status === "tracking" ? t("noBusinesses") : status === "loading" ? t("findingLocation") : t("shareLocationForPlaces")}
-                                    </div>
-                                )}
-                                <motion.div className="flex flex-col gap-1" layout>
-                                    {places.slice((currentPage - 1) * 20, currentPage * 20).map((place) => {
-                                        const dist = coords
-                                            ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
-                                            : null;
-                                        return (
+                                        {[1, 2, 3].map(i => (
                                             <motion.div
-                                                key={place.place_id}
-                                                layout
+                                                key={i}
+                                                className="flex gap-3 items-center animate-pulse"
                                                 initial={{ opacity: 0, y: 8 }}
                                                 animate={{ opacity: 1, y: 0 }}
-                                                whileTap={{ scale: 0.995 }}
-                                                transition={{ duration: 0.16 }}
-                                                className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
+                                                transition={{ delay: i * 0.04 }}
                                             >
-                                                <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
-                                                    {getCategoryIcon(place.types)}
+                                                <div className="w-9 h-9 rounded-xl bg-zinc-100 shrink-0" />
+                                                <div className="flex flex-col gap-1.5 flex-1">
+                                                    <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
+                                                    <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
                                                 </div>
-                                                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                                                    <p className="text-[13px] font-semibold text-zinc-800 truncate">{place.name}</p>
-                                                    <p className="text-[11px] text-zinc-400 truncate">{place.vicinity}</p>
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
-                                                            {getCategoryLabel(place.types, language)}
-                                                        </span>
-                                                        {place.rating != null && (
-                                                            <>
-                                                                <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                                                                <span className="text-[10px] font-medium text-amber-600">
-                                                                    {place.rating.toFixed(1)}
-                                                                    {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
-                                                                </span>
-                                                            </>
-                                                        )}
-                                                        {place.business_status && place.business_status !== "OPERATIONAL" && (
-                                                            <span className="text-[10px] font-medium text-red-400">Cerrado</span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                {dist !== null && (
-                                                    <div className="text-[11px] font-semibold text-zinc-400 shrink-0 pt-0.5">
-                                                        {dist < 1000 ? `${dist}m` : `${(dist / 1000).toFixed(1)}km`}
-                                                    </div>
-                                                )}
                                             </motion.div>
-                                        );
-                                    })}
-                                </motion.div>
-
-                                {places.length > 20 && (
-                                    <div className="flex items-center justify-between px-2 py-4 mt-2 border-t border-black/5 bg-white/50 sticky bottom-0">
-                                        <button
-                                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                            disabled={currentPage === 1}
-                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
-                                        >
-                                            <ChevronLeft className="w-4 h-4" />
-                                        </button>
-                                        <div className="text-center">
-                                            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">{t("page")}</p>
-                                            <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(places.length / 20)}</p>
-                                        </div>
-                                        <button
-                                            onClick={() => setCurrentPage(p => Math.min(Math.ceil(places.length / 20), p + 1))}
-                                            disabled={currentPage === Math.ceil(places.length / 20)}
-                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
-                                        >
-                                            <ChevronRight className="w-4 h-4" />
-                                        </button>
+                                        ))}
                                     </div>
                                 )}
-                            </div>
-                        )}
+
+                                {(!loadingPlaces || places.length > 0) && (
+                                    <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
+                                        {places.length === 0 && (
+                                            <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
+                                                {status === "tracking" ? t("noBusinesses") : status === "loading" ? t("findingLocation") : t("shareLocationForPlaces")}
+                                            </div>
+                                        )}
+                                        <motion.div className="flex flex-col gap-1" layout>
+                                            {places.slice((currentPage - 1) * 20, currentPage * 20).map((place) => {
+                                                const dist = coords
+                                                    ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
+                                                    : null;
+                                                return (
+                                                    <motion.div
+                                                        key={place.place_id}
+                                                        layout
+                                                        initial={{ opacity: 0, y: 8 }}
+                                                        animate={{ opacity: 1, y: 0 }}
+                                                        whileTap={{ scale: 0.995 }}
+                                                        transition={{ duration: 0.16 }}
+                                                        className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
+                                                    >
+                                                        <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
+                                                            {getCategoryIcon(place.types)}
+                                                        </div>
+                                                        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                                                            <p className="text-[13px] font-semibold text-zinc-800 truncate">{place.name}</p>
+                                                            <p className="text-[11px] text-zinc-400 truncate">{place.vicinity}</p>
+                                                            <div className="flex items-center gap-2 mt-0.5">
+                                                                <span className="text-[10px] font-medium text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-md">
+                                                                    {getCategoryLabel(place.types, language)}
+                                                                </span>
+                                                                {place.rating != null && (
+                                                                    <>
+                                                                        <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                                                                        <span className="text-[10px] font-medium text-amber-600">
+                                                                            {place.rating.toFixed(1)}
+                                                                            {place.user_ratings_total ? ` (${place.user_ratings_total > 999 ? (place.user_ratings_total / 1000).toFixed(1) + "k" : place.user_ratings_total})` : ""}
+                                                                        </span>
+                                                                    </>
+                                                                )}
+                                                                {place.business_status && place.business_status !== "OPERATIONAL" && (
+                                                                    <span className="text-[10px] font-medium text-red-400">Cerrado</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        {dist !== null && (
+                                                            <div className="text-[11px] font-semibold text-zinc-400 shrink-0 pt-0.5">
+                                                                {dist < 1000 ? `${dist}m` : `${(dist / 1000).toFixed(1)}km`}
+                                                            </div>
+                                                        )}
+                                                    </motion.div>
+                                                );
+                                            })}
+                                        </motion.div>
+
+                                        {places.length > 20 && (
+                                            <div className="flex items-center justify-between px-2 py-4 mt-2 border-t border-black/5 bg-white/50 sticky bottom-0">
+                                                <button
+                                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                                    disabled={currentPage === 1}
+                                                    className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                                >
+                                                    <ChevronLeft className="w-4 h-4" />
+                                                </button>
+                                                <div className="text-center">
+                                                    <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">{t("page")}</p>
+                                                    <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(places.length / 20)}</p>
+                                                </div>
+                                                <button
+                                                    onClick={() => setCurrentPage(p => Math.min(Math.ceil(places.length / 20), p + 1))}
+                                                    disabled={currentPage === Math.ceil(places.length / 20)}
+                                                    className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
+                                                >
+                                                    <ChevronRight className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </>
                         )}
 
@@ -569,7 +698,7 @@ export function Panel() {
                                 </p>
                             </div>
                             <div className="flex items-center gap-3">
-                                <button 
+                                <button
                                     onClick={() => setIsHotelsExpanded(!isHotelsExpanded)}
                                     className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-lg transition-colors active:scale-95 shrink-0"
                                 >
@@ -683,17 +812,17 @@ export function Panel() {
                                             className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
                                         >
                                             <div className="flex items-start gap-3">
-                                                    <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                                                        {event.category.includes("Salsa") || event.category.includes("Música") ? (
-                                                            <Music className="w-5 h-5 text-blue-500" />
-                                                        ) : event.category.includes("Gastronomía") ? (
-                                                            <Utensils className="w-5 h-5 text-blue-500" />
-                                                        ) : event.category.includes("Cine") ? (
-                                                            <Video className="w-5 h-5 text-blue-500" />
-                                                        ) : (
-                                                            <Calendar className="w-5 h-5 text-blue-500" />
-                                                        )}
-                                                    </div>
+                                                <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                                                    {event.category.includes("Salsa") || event.category.includes("Música") ? (
+                                                        <Music className="w-5 h-5 text-blue-500" />
+                                                    ) : event.category.includes("Gastronomía") ? (
+                                                        <Utensils className="w-5 h-5 text-blue-500" />
+                                                    ) : event.category.includes("Cine") ? (
+                                                        <Video className="w-5 h-5 text-blue-500" />
+                                                    ) : (
+                                                        <Calendar className="w-5 h-5 text-blue-500" />
+                                                    )}
+                                                </div>
                                                 <div className="flex flex-col gap-1 min-w-0 flex-1">
                                                     <div className="flex items-center justify-between">
                                                         <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase tracking-tighter">

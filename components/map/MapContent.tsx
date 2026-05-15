@@ -118,6 +118,10 @@ function MapContent() {
         currentNarration,
         speak,
         currentComuna,
+        activeRouteLandmark,
+        setActiveRouteLandmark,
+        routeInterestPoints,
+        setRouteInterestPoints,
         places,
         toggle3D
     } = useMap();
@@ -131,17 +135,6 @@ function MapContent() {
 
 
 
-    // Cargar conversación de la sesión al abrir un landmark
-    useEffect(() => {
-        if (expandedLandmark) {
-            const saved = sessionStorage.getItem(`chat_${expandedLandmark}`);
-            if (saved) {
-                setConversation(JSON.parse(saved));
-            } else {
-                setConversation([]);
-            }
-        }
-    }, [expandedLandmark]);
 
     const askAI = async (question: string, landmarkName: string) => {
         if (!question.trim() || isAsking) return;
@@ -159,7 +152,7 @@ function MapContent() {
         }
 
         const nearbyContext = places.length > 0
-            ? `Lugares cercanos detectados: ${places.slice(0, 5).map(p => `${p.name} (${p.types?.join(', ') || 'negocio'})`).join(', ')}`
+            ? `Opciones de ruta para recomendar (USA ESTOS NOMBRES EXACTOS ENTRE [[ ]]): ${places.slice(0, 8).map(p => p.name).join(', ')}`
             : "";
 
         const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
@@ -175,18 +168,29 @@ function MapContent() {
             El usuario está viendo información sobre el monumento "${landmarkName}" y pregunta: "${question}".
             Responde como CaliGuía, el guía experto, amable y profesional. 
             Si te preguntan por seguridad, usa el contexto proporcionado con honestidad pero sin alarmar.
-            Si te preguntan por recomendaciones (café, comida, etc.), usa la lista de lugares cercanos si es relevante, o recomienda sitios icónicos de este barrio específico.
+            Si te preguntan por recomendaciones (café, comida, etc.), DEBES usar la lista de lugares cercanos si es relevante. 
+            IMPORTANTE: Cuando menciones un lugar de la lista anterior, escríbelo EXACTAMENTE entre dobles corchetes, por ejemplo: [[Nombre del Lugar]]. Esto es CRUCIAL para que el usuario pueda ver la ruta.
             Personaliza tu respuesta basándote en los intereses del usuario si es posible.
-            Sé breve, natural y fascinante. Máximo 50 palabras.
+            Sé natural, detallado y fascinante. No termines las frases a medias. Máximo 150 palabras.
         `;
 
         try {
-            const response = await fetchNarration(prompt, "info", language || "es");
+            const response = await fetchNarration(prompt, "chat", language || "es");
             if (response) {
                 const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
                 const finalChat = [...updatedChat, aiMsg];
                 setConversation(finalChat);
                 sessionStorage.setItem(`chat_${landmarkName}`, JSON.stringify(finalChat));
+
+                // Persist to DB if authenticated
+                if (authStatus === "authenticated") {
+                    fetch("/api/users/me/chat-history", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ landmarkName, messages: finalChat })
+                    }).catch(err => console.error("Error persisting chat:", err));
+                }
+
                 if (speak) {
                     speak({ type: "info", text: response, title: landmarkName, icon: "💬" });
                 }
@@ -197,6 +201,234 @@ function MapContent() {
             setIsAsking(false);
         }
     };
+
+    const handleToggleRoute = async (landmarkName: string) => {
+        const landmark = localLandmarks.find(l => l.name === landmarkName);
+        if (!landmark || !coords || !mapInstance.current || !google.maps.importLibrary) return;
+
+        // If this route is already active, remove it
+        if (activeRouteLandmark === landmark.name) {
+            if (routePolylineRef.current) {
+                routePolylineRef.current.setVisible(false);
+                routePolylineRef.current.setPath([]);
+            }
+            window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
+            setActiveRouteLandmark(null);
+            setRouteInterestPoints([]);
+            setExpandedLandmark(null);
+            return;
+        }
+
+        setExpandedLandmark(null);
+
+        // --- Overlays ---
+        class InterestOverlay extends google.maps.OverlayView {
+            private div: HTMLDivElement | null = null;
+            private isExpanded = false;
+            constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map, private name: string, private type: string) {
+                super();
+                this.setMap(map);
+                window.addEventListener("caliguia:clear-route-overlays", () => this.setMap(null), { once: true });
+            }
+            onAdd() {
+                this.div = document.createElement("div");
+                this.div.style.position = "absolute";
+                this.div.style.cursor = "pointer";
+                this.div.style.zIndex = "997";
+                this.render();
+                this.div.onclick = () => { this.isExpanded = !this.isExpanded; this.render(); };
+                this.getPanes()!.floatPane.appendChild(this.div);
+            }
+            render() {
+                if (!this.div) return;
+                const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
+                if (this.isExpanded) {
+                    this.div.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
+                            <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
+                            <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
+                        </div>
+                    `;
+                } else {
+                    this.div.innerHTML = `
+                        <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">${icon}</div>
+                    `;
+                }
+            }
+            draw() {
+                const projection = this.getProjection();
+                if (!projection || !this.div) return;
+                const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                if (p) { this.div.style.left = p.x + "px"; this.div.style.top = p.y + "px"; this.div.style.transform = "translateX(-50%) translateY(-50%)"; }
+            }
+            onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+        }
+
+        class DestinationOverlay extends google.maps.OverlayView {
+            private div: HTMLDivElement | null = null;
+            constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map, private label: string) {
+                super();
+                this.setMap(map);
+                window.addEventListener("caliguia:clear-route-overlays", () => this.setMap(null), { once: true });
+            }
+            onAdd() {
+                this.div = document.createElement("div");
+                this.div.style.position = "absolute";
+                this.div.style.zIndex = "998";
+                this.div.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
+                        <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
+                        <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">${this.label}</span>
+                    </div>
+                    <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
+                `;
+                this.getPanes()!.floatPane.appendChild(this.div);
+            }
+            draw() {
+                const projection = this.getProjection();
+                if (!projection || !this.div) return;
+                const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+                if (p) { this.div.style.left = p.x + "px"; this.div.style.top = p.y + "px"; this.div.style.transform = "translateX(-50%) translateY(-100%)"; }
+            }
+            onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
+        }
+
+        window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
+
+        const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
+        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+
+        setActiveRouteLandmark(null);
+        setRouteInterestPoints([]);
+        routeMarkersRef.current.forEach(m => m.setMap(null));
+        routeMarkersRef.current = [];
+        if (routePolylineRef.current) { routePolylineRef.current.setVisible(false); routePolylineRef.current.setPath([]); }
+
+        const waypoints: google.maps.DirectionsWaypoint[] = [];
+        const interestPoints: any[] = [];
+
+        const padding = 0.002;
+        const minLat = Math.min(coords.lat, landmark.lat) - padding;
+        const maxLat = Math.max(coords.lat, landmark.lat) + padding;
+        const minLng = Math.min(coords.lng, landmark.lng) - padding;
+        const maxLng = Math.max(coords.lng, landmark.lng) + padding;
+
+        const relevantLandmarks = localLandmarks.filter(l => {
+            const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
+            if (!inBox || l.name.toLowerCase() === landmark.name.toLowerCase()) return false;
+            return true; 
+        });
+
+        relevantLandmarks.slice(0, 5).forEach(l => {
+            waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
+            interestPoints.push(l);
+        });
+
+        const directionsService = new google.maps.DirectionsService();
+        directionsService.route(
+            {
+                origin: { lat: coords.lat, lng: coords.lng },
+                destination: { lat: landmark.lat, lng: landmark.lng },
+                waypoints: waypoints,
+                optimizeWaypoints: true,
+                travelMode: userProfile.style === 'relajado' ? google.maps.TravelMode.DRIVING : google.maps.TravelMode.WALKING,
+            },
+            async (result, status) => {
+                if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
+                    if (userProfile.style === 'caminante') {
+                        routePolylineRef.current.setOptions({ strokeColor: "#3b82f6", strokeOpacity: 0, icons: [{ icon: { path: google.maps.SymbolPath.CIRCLE, fillOpacity: 1, scale: 2.2, fillColor: "#3b82f6", strokeColor: "#ffffff", strokeWeight: 0.5 }, offset: '0', repeat: '12px' }] });
+                    } else {
+                        routePolylineRef.current.setOptions({ strokeColor: "#1e293b", strokeOpacity: 1, strokeWeight: 5, icons: [] });
+                    }
+                    routePolylineRef.current.setPath(result.routes[0].overview_path);
+                    routePolylineRef.current.setVisible(true);
+                    mapInstance.current.fitBounds(result.routes[0].bounds);
+
+                    interestPoints.forEach(ip => {
+                        const overlay = new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
+                        routeMarkersRef.current.push(overlay);
+                    });
+                    const dest = new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!, "Destino");
+                    routeMarkersRef.current.push(dest);
+                    setActiveRouteLandmark(landmark.name);
+                    setRouteInterestPoints(interestPoints);
+
+                    if (speak) {
+                        const routeNarrationByLang: Record<string, string> = {
+                            es: `He trazado una ruta especial para ti pasando por ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' y ') : 'los puntos más bonitos de la ciudad'}. ¡Disfruta el camino!`,
+                            en: `I've mapped a personalized route for you passing through ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' and ') : 'the most beautiful spots in the city'}. Enjoy the journey!`,
+                            pt: `Tracei uma rota especial para você pasando por ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' e ') : 'os puntos mais bonitos da ciudad'}. Aproveite o camino!`,
+                        };
+                        speak({ type: "info", text: routeNarrationByLang[language || 'es'] || routeNarrationByLang.es, title: t("customRoute"), icon: "✨" });
+                    }
+                } else {
+                    window.open(`https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`, '_blank');
+                }
+            }
+        );
+    };
+
+    // Cargar conversación de la sesión al abrir un landmark
+    useEffect(() => {
+        const handleExternalRoute = (e: any) => {
+            if (e.detail?.name) {
+                handleToggleRoute(e.detail.name);
+            }
+        };
+        window.addEventListener("caliguia:show-landmark-route", handleExternalRoute);
+        return () => window.removeEventListener("caliguia:show-landmark-route", handleExternalRoute);
+    }, [handleToggleRoute]);
+
+    useEffect(() => {
+        if (expandedLandmark) {
+            const loadAndGreet = async () => {
+                let initialMessages: any[] = [];
+                
+                if (authStatus === "authenticated") {
+                    try {
+                        const res = await fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(expandedLandmark)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data?.messages) initialMessages = data.messages;
+                        }
+                    } catch (e) {
+                        console.error("Error fetching chat history:", e);
+                    }
+                }
+
+                if (initialMessages.length === 0) {
+                    const saved = sessionStorage.getItem(`chat_${expandedLandmark}`);
+                    if (saved) initialMessages = JSON.parse(saved);
+                }
+
+                setConversation(initialMessages);
+
+                // Greeting logic: if NO previous messages, say hi in the right language
+                if (initialMessages.length === 0 && speak) {
+                    const greeting = t("chatGreeting");
+                    speak({ 
+                        type: "info", 
+                        text: greeting, 
+                        title: expandedLandmark, 
+                        icon: "✨" 
+                    });
+                }
+            };
+            
+            loadAndGreet();
+        }
+    }, [expandedLandmark, authStatus, speak, t]);
+
+    useEffect(() => {
+        if (expandedLandmark && currentNarration && currentNarration.text) {
+            // Avoid duplicates if the message is already in history
+            setConversation(prev => {
+                const alreadyExists = prev.some(m => m.text === currentNarration.text);
+                if (alreadyExists) return prev;
+                return [...prev, { role: 'ai', text: currentNarration.text }];
+            });
+        }
+    }, [expandedLandmark, currentNarration]);
 
     const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
     const { language } = useExperience();
@@ -567,289 +799,126 @@ function MapContent() {
                                             )}
 
                                             <div className="p-8 flex flex-col gap-6">
-                                                {/* AI Monologue (Dynamic text) */}
-                                                <div className="flex flex-col gap-3">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                                                        <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400">{t("listening")}</p>
-                                                    </div>
-
-                                                    <div className="min-h-[60px] flex flex-col justify-center">
-                                                        <AnimatePresence mode="wait">
-                                                            <motion.p
-                                                                key={currentNarration?.text || "default"}
-                                                                initial={{ opacity: 0, y: 10 }}
-                                                                animate={{ opacity: 1, y: 0 }}
-                                                                exit={{ opacity: 0, y: -10 }}
-                                                                className="text-[15px] text-zinc-800 font-medium leading-relaxed italic"
-                                                            >
-                                                                {currentNarration?.text || t("expandHint")}
-                                                            </motion.p>
-                                                        </AnimatePresence>
-                                                    </div>
-                                                </div>
-
-                                                {/* Chat History (Mini version) */}
+                                                {/* Chat History (Always visible if there are messages) */}
                                                 {conversation.length > 0 && (
-                                                    <div className="flex flex-col gap-3 max-h-[150px] overflow-y-auto pr-2 no-scrollbar border-t border-zinc-100 pt-4">
-                                                        {conversation.map((msg, i) => (
-                                                            <motion.div
-                                                                key={i}
-                                                                initial={{ opacity: 0, x: msg.role === 'user' ? 10 : -10 }}
-                                                                animate={{ opacity: 1, x: 0 }}
-                                                                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                                                            >
-                                                                <p className={`text-[11px] px-3 py-1.5 rounded-2xl ${msg.role === 'user' ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-50 text-blue-700 font-medium'}`}>
-                                                                    {msg.text}
-                                                                </p>
-                                                            </motion.div>
-                                                        ))}
+                                                    <div className="flex flex-col gap-3 max-h-[250px] overflow-y-auto pr-2 no-scrollbar border-t border-zinc-100 pt-4">
+                                                        {conversation.map((msg, i) => {
+                                                            // Parse [[Landmark]] in the text
+                                                            const parts = msg.text.split(/(\[\[.*?\]\])/g);
+                                                            
+                                                            return (
+                                                                <motion.div
+                                                                    key={i}
+                                                                    initial={{ opacity: 0, x: msg.role === 'user' ? 10 : -10 }}
+                                                                    animate={{ opacity: 1, x: 0 }}
+                                                                    className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                                                                >
+                                                                    <div className={`text-[11px] px-3 py-1.5 rounded-2xl ${msg.role === 'user' ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-50 text-blue-700 font-medium'}`}>
+                                                                        {parts.map((part, idx) => {
+                                                                            if (part.startsWith('[[') && part.endsWith(']]')) {
+                                                                                const name = part.slice(2, -2);
+                                                                                const target = localLandmarks.find(l => l.name.toLowerCase() === name.toLowerCase());
+                                                                                if (target) {
+                                                                                    return (
+                                                                                        <button
+                                                                                            key={idx}
+                                                                                            onClick={() => handleToggleRoute(target.name)}
+                                                                                            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded-md bg-blue-600 text-white font-black hover:bg-blue-700 transition-colors"
+                                                                                        >
+                                                                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                                                                                            {name}
+                                                                                        </button>
+                                                                                    );
+                                                                                }
+                                                                                return name;
+                                                                            }
+                                                                            return part;
+                                                                        })}
+                                                                    </div>
+                                                                </motion.div>
+                                                            );
+                                                        })}
                                                     </div>
                                                 )}
 
-                                                {/* Recommended Questions */}
-                                                <div className="flex flex-wrap gap-2">
-                                                    {["¿Cuál es su historia?", "¿Qué hay cerca?", "¿A qué hora cierran?"].map((q) => (
-                                                        <button
-                                                            key={q}
-                                                            onClick={() => askAI(q, landmark.name)}
-                                                            className="px-3 py-1.5 rounded-full bg-zinc-50 border border-zinc-100 text-[11px] font-bold text-zinc-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-100 transition-all active:scale-95"
-                                                        >
-                                                            {q}
-                                                        </button>
-                                                    ))}
-                                                </div>
+                                                {/* Chat Interactions - Only for Authenticated Users */}
+                                                {isAuthenticated ? (
+                                                    <>
+                                                        {/* Recommended Questions */}
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {[
+                                                                { key: "questionHistory", text: t("questionHistory") },
+                                                                { key: "questionNearby", text: t("questionNearby") },
+                                                                { key: "questionHours", text: t("questionHours") }
+                                                            ].map((q) => (
+                                                                <button
+                                                                    key={q.key}
+                                                                    onClick={() => askAI(q.text, landmark.name)}
+                                                                    className="px-3 py-1.5 rounded-full bg-zinc-50 border border-zinc-100 text-[11px] font-bold text-zinc-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-100 transition-all active:scale-95"
+                                                                >
+                                                                    {q.text}
+                                                                </button>
+                                                            ))}
+                                                        </div>
 
-                                                {/* Input Field */}
-                                                <div className="relative mt-2">
-                                                    <input
-                                                        type="text"
-                                                        value={userQuestion}
-                                                        onChange={(e) => setUserQuestion(e.target.value)}
-                                                        onKeyDown={(e) => e.key === 'Enter' && askAI(userQuestion, landmark.name)}
-                                                        placeholder="Pregúntale lo que quieras..."
-                                                        className="w-full bg-zinc-100 border-none rounded-2xl px-5 py-4 text-[14px] font-medium focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-zinc-400"
-                                                    />
-                                                    <button
-                                                        onClick={() => askAI(userQuestion, landmark.name)}
-                                                        disabled={!userQuestion.trim() || isAsking}
-                                                        className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/30 active:scale-90 transition-all disabled:opacity-50 disabled:shadow-none"
+                                                        {/* Input Field */}
+                                                        <div className="relative mt-2">
+                                                            <input
+                                                                type="text"
+                                                                value={userQuestion}
+                                                                onChange={(e) => setUserQuestion(e.target.value)}
+                                                                onKeyDown={(e) => e.key === 'Enter' && askAI(userQuestion, landmark.name)}
+                                                                placeholder={t("askAIPlaceholder")}
+                                                                className="w-full bg-zinc-100 border-none rounded-2xl px-5 py-4 text-[14px] font-medium focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-zinc-400"
+                                                            />
+                                                            <button
+                                                                onClick={() => askAI(userQuestion, landmark.name)}
+                                                                disabled={!userQuestion.trim() || isAsking}
+                                                                className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/30 active:scale-90 transition-all disabled:opacity-50 disabled:shadow-none"
+                                                            >
+                                                                {isAsking ? (
+                                                                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                                                                ) : (
+                                                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m5 12 7-7 7 7M12 5v14" /></svg>
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="bg-zinc-50 border border-zinc-100 rounded-3xl p-6 text-center">
+                                                        <div className="w-12 h-12 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                                        </div>
+                                                        <p className="text-[13px] text-zinc-500 font-bold mb-4 px-4 leading-relaxed">Inicia sesión para conversar con CaliGuía y guardar tus rutas favoritas.</p>
+                                                        <button 
+                                                            onClick={() => window.dispatchEvent(new CustomEvent("caliguia:open-profile"))}
+                                                            className="px-6 py-3 bg-white border border-zinc-200 shadow-sm rounded-2xl text-[12px] font-black text-zinc-800 hover:bg-zinc-50 active:scale-95 transition-all"
+                                                        >
+                                                            Iniciar sesión
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                     <button
+                                                        onClick={() => handleToggleRoute(landmark.name)}
+                                                        className={`w-full py-4 rounded-2xl text-[14px] font-black transition-all flex items-center justify-center gap-2 active:scale-95 shadow-lg ${
+                                                            activeRouteLandmark === landmark.name 
+                                                            ? "bg-zinc-800 text-white shadow-zinc-500/25" 
+                                                            : "bg-blue-600 text-white shadow-blue-500/25 hover:bg-blue-700"
+                                                        }`}
                                                     >
-                                                        {isAsking ? (
-                                                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                                                        {activeRouteLandmark === landmark.name ? (
+                                                            <>
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                                                                {t("removeRoute") || "Quitar ruta"}
+                                                            </>
                                                         ) : (
-                                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m5 12 7-7 7 7M12 5v14" /></svg>
+                                                            <>
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                                                                {t("viewRoute")}
+                                                            </>
                                                         )}
                                                     </button>
-                                                </div>
-
-                                                <div className="flex flex-col gap-3 mt-4">
-                                                    <button
-                                                        onClick={async () => {
-                                                            if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
-                                                            setExpandedLandmark(null);
-
-                                                            // --- Clases de Overlays Dinámicos ---
-                                                            class InterestOverlay extends google.maps.OverlayView {
-                                                                private div: HTMLDivElement | null = null;
-                                                                private isExpanded = false;
-                                                                constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map, private name: string, private type: string) {
-                                                                    super();
-                                                                    this.setMap(map);
-                                                                }
-                                                                onAdd() {
-                                                                    this.div = document.createElement("div");
-                                                                    this.div.style.position = "absolute";
-                                                                    this.div.style.cursor = "pointer";
-                                                                    this.div.style.zIndex = "997";
-                                                                    this.render();
-                                                                    this.div.onclick = () => {
-                                                                        this.isExpanded = !this.isExpanded;
-                                                                        this.render();
-                                                                    };
-                                                                    this.getPanes()!.floatPane.appendChild(this.div);
-                                                                }
-                                                                render() {
-                                                                    if (!this.div) return;
-                                                                    const icon = this.type.includes('Parque') ? '🌿' : this.type.includes('Museo') ? '🏛️' : this.type.includes('Salsa') ? '💃' : '📍';
-
-                                                                    if (this.isExpanded) {
-                                                                        this.div.innerHTML = `
-                                                                            <div style="display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;background:white;border-radius:40px;border:2px solid #3b82f6;box-shadow:0 4px 12px rgba(0,0,0,0.15);transform:translateY(-10px);white-space:nowrap">
-                                                                                <div style="width:24px;height:24px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:12px;">${icon}</div>
-                                                                                <span style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#1e3a5f">${this.name}</span>
-                                                                            </div>
-                                                                        `;
-                                                                    } else {
-                                                                        this.div.innerHTML = `
-                                                                            <div style="width:32px;height:32px;background:white;border-radius:50%;border:2px solid #3b82f6;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;">
-                                                                                ${icon}
-                                                                            </div>
-                                                                        `;
-                                                                    }
-                                                                }
-                                                                draw() {
-                                                                    const projection = this.getProjection();
-                                                                    if (!projection || !this.div) return;
-                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
-                                                                    if (p) {
-                                                                        this.div.style.left = p.x + "px";
-                                                                        this.div.style.top = p.y + "px";
-                                                                        this.div.style.transform = "translateX(-50%) translateY(-50%)";
-                                                                    }
-                                                                }
-                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
-                                                            }
-
-                                                            class DestinationOverlay extends google.maps.OverlayView {
-                                                                private div: HTMLDivElement | null = null;
-                                                                constructor(private pos: { lat: number, lng: number }, private map: google.maps.Map) {
-                                                                    super();
-                                                                    this.setMap(map);
-                                                                }
-                                                                onAdd() {
-                                                                    this.div = document.createElement("div");
-                                                                    this.div.style.position = "absolute";
-                                                                    this.div.style.zIndex = "998";
-                                                                    this.div.innerHTML = `
-                                                                        <div style="display:flex;align-items:center;gap:6px;padding:5px 12px 5px 5px;background:white;border-radius:40px;border:3px solid #10b981;box-shadow:0 6px 16px rgba(16,185,129,0.3);transform:translateY(-40px);white-space:nowrap">
-                                                                            <div style="width:28px;height:28px;border-radius:50%;background:#ecfdf5;border:2px solid #10b981;display:flex;align-items:center;justify-content:center;font-size:14px;">🏁</div>
-                                                                            <span style="font-family:-apple-system,sans-serif;font-size:14px;font-weight:900;color:#064e3b">Destino</span>
-                                                                        </div>
-                                                                        <div style="width:14px;height:14px;background:#10b981;border:3px solid white;border-radius:50%;position:absolute;bottom:0;left:50%;transform:translate(-50%, 50%);"></div>
-                                                                    `;
-                                                                    this.getPanes()!.floatPane.appendChild(this.div);
-                                                                }
-                                                                draw() {
-                                                                    const projection = this.getProjection();
-                                                                    if (!projection || !this.div) return;
-                                                                    const p = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
-                                                                    if (p) {
-                                                                        this.div.style.left = p.x + "px";
-                                                                        this.div.style.top = p.y + "px";
-                                                                        this.div.style.transform = "translateX(-50%) translateY(-100%)";
-                                                                    }
-                                                                }
-                                                                onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; }
-                                                            }
-
-                                                            // 1. Obtener perfil del usuario
-                                                            const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
-                                                            const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
-
-                                                            // 2. Limpiar pines de ruta anteriores
-                                                            routeMarkersRef.current.forEach(m => m.setMap(null));
-                                                            routeMarkersRef.current = [];
-
-                                                            // 3. Buscar lugares de interés en el camino
-                                                            const waypoints: google.maps.DirectionsWaypoint[] = [];
-                                                            const interestPoints: any[] = [];
-
-                                                            // Bounding box expandido para encontrar lugares en el trayecto
-                                                            const minLat = Math.min(coords.lat, landmark.lat) - 0.002;
-                                                            const maxLat = Math.max(coords.lat, landmark.lat) + 0.002;
-                                                            const minLng = Math.min(coords.lng, landmark.lng) - 0.002;
-                                                            const maxLng = Math.max(coords.lng, landmark.lng) + 0.002;
-
-                                                            // Filtrar landmarks que coincidan con intereses y estén en el área del trayecto
-                                                            const relevantLandmarks = localLandmarks.filter(l => {
-                                                                const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
-                                                                if (!inBox) return false;
-
-                                                                const interests = userProfile.interests;
-                                                                const name = l.name.toLowerCase();
-                                                                const desc = (l.description || "").toLowerCase();
-
-                                                                return (
-                                                                    (interests.includes('cultura') && (desc.includes('heritage') || desc.includes('architecture') || desc.includes('theatre') || desc.includes('patrimonio'))) ||
-                                                                    (interests.includes('naturaleza') && (desc.includes('park') || desc.includes('nature') || desc.includes('river') || desc.includes('parque') || desc.includes('río'))) ||
-                                                                    (interests.includes('salsa') && (name.includes('salsa') || name.includes('dance') || name.includes('baile'))) ||
-                                                                    (interests.includes('arte') && (desc.includes('art') || desc.includes('gallery') || desc.includes('mural') || desc.includes('design'))) ||
-                                                                    (interests.includes('historia') && (desc.includes('history') || desc.includes('museum') || desc.includes('colonia') || desc.includes('histórico'))) ||
-                                                                    (interests.includes('bebidas') && (desc.includes('drink') || desc.includes('gastronomy') || desc.includes('market') || desc.includes('lulada')))
-                                                                );
-                                                            });
-
-                                                            // Tomar hasta 5 puntos interesantes para la ruta
-                                                            relevantLandmarks.slice(0, 5).forEach(l => {
-                                                                waypoints.push({ location: { lat: l.lat, lng: l.lng }, stopover: true });
-                                                                interestPoints.push(l);
-                                                            });
-
-                                                            const directionsService = new google.maps.DirectionsService();
-                                                            directionsService.route(
-                                                                {
-                                                                    origin: { lat: coords.lat, lng: coords.lng },
-                                                                    destination: { lat: landmark.lat, lng: landmark.lng },
-                                                                    waypoints: waypoints,
-                                                                    optimizeWaypoints: true,
-                                                                    travelMode: google.maps.TravelMode.WALKING,
-                                                                },
-                                                                async (result, status) => {
-                                                                    if (status === "OK" && routePolylineRef.current && result && mapInstance.current) {
-                                                                        // Configurar estilo según perfil
-                                                                        if (userProfile.style === 'caminante') {
-                                                                            routePolylineRef.current.setOptions({
-                                                                                strokeColor: "#3b82f6",
-                                                                                strokeOpacity: 0, // Totalmente invisible la línea base
-                                                                                icons: [{
-                                                                                    icon: {
-                                                                                        path: google.maps.SymbolPath.CIRCLE,
-                                                                                        fillOpacity: 1,
-                                                                                        scale: 2.2,
-                                                                                        fillColor: "#3b82f6",
-                                                                                        strokeColor: "#ffffff",
-                                                                                        strokeWeight: 0.5
-                                                                                    },
-                                                                                    offset: '0',
-                                                                                    repeat: '12px'
-                                                                                }]
-                                                                            });
-                                                                        } else {
-                                                                            routePolylineRef.current.setOptions({
-                                                                                strokeColor: "#1e293b",
-                                                                                strokeOpacity: 1,
-                                                                                strokeWeight: 5,
-                                                                                icons: []
-                                                                            });
-                                                                        }
-
-                                                                        routePolylineRef.current.setPath(result.routes[0].overview_path);
-                                                                        routePolylineRef.current.setVisible(true);
-                                                                        const bounds = result.routes[0].bounds;
-                                                                        mapInstance.current.fitBounds(bounds);
-
-                                                                        // Añadir pines de interés usando el nuevo Overlay premium interactivo
-                                                                        interestPoints.forEach(ip => {
-                                                                            const overlay = new InterestOverlay({ lat: ip.lat, lng: ip.lng }, mapInstance.current!, ip.name, ip.description || "");
-                                                                            routeMarkersRef.current.push(overlay);
-                                                                        });
-
-                                                                        // Añadir pin de DESTINO
-                                                                        const destOverlay = new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
-                                                                        routeMarkersRef.current.push(destOverlay);
-
-                                                                        if (speak) {
-                                                                            speak({
-                                                                                type: "info",
-                                                                                text: `He trazado una ruta especial para ti pasando por ${interestPoints.length > 0 ? interestPoints.map(p => p.name).join(' y ') : 'los puntos más bonitos de la ciudad'}. ¡Disfruta el camino!`,
-                                                                                title: t("customRoute"),
-                                                                                icon: "✨"
-                                                                            });
-                                                                        }
-                                                                    } else {
-                                                                        const url = `https://www.google.com/maps/dir/?api=1&origin=${coords.lat},${coords.lng}&destination=${landmark.lat},${landmark.lng}&travelmode=walking`;
-                                                                        window.open(url, '_blank');
-                                                                    }
-                                                                }
-                                                            );
-                                                        }}
-                                                        className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl bg-zinc-900 text-white font-bold text-[15px] shadow-lg active:scale-[0.98] transition-transform"
-                                                    >
-                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 18V5l12-2v13l-12 2zm-3.5 3c.828 0 1.5-.672 1.5-1.5s-.672-1.5-1.5-1.5-1.5.672-1.5 1.5.672 1.5 1.5 1.5z" /></svg>
-                                                        {t("drawCustomRoute")}
-                                                    </button>
-                                                </div>
                                             </div>
                                         </div>
                                     </>

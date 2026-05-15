@@ -61,11 +61,44 @@ export async function uploadVoiceSample(params: {
 }
 
 export async function downloadVoiceSample(objectName: string) {
-  const [bytes] = await requireVoiceBucket().file(objectName).download();
-  return bytes;
+  const bucket = storage.bucket(process.env.CALIGUIA_VOICE_BUCKET!);
+  const file = bucket.file(objectName);
+  const [content] = await file.download();
+  return content;
+}
+
+/**
+ * Lists all official voices in the bucket's official_voices/ folder.
+ * Expects format: official_voices/{name}-voice.wav
+ */
+export async function listOfficialVoices() {
+  const bucketName = process.env.CALIGUIA_VOICE_BUCKET;
+  if (!bucketName) return [];
+
+  try {
+    const bucket = storage.bucket(bucketName);
+    const [files] = await bucket.getFiles({ prefix: "official_voices/" });
+
+    return files
+      .filter(f => f.name.endsWith("-voice.wav"))
+      .map(f => {
+        const fileName = f.name.split("/").pop() || "";
+        const id = `system:${fileName.replace("-voice.wav", "")}`;
+        const name = fileName
+          .replace("-voice.wav", "")
+          .replace(/-/g, " ")
+          .split(" ")
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+
+        return { id, name, isSystem: true, objectName: f.name };
+      });
+  } catch (error) {
+    console.error("[voice-storage] Error listing official voices:", error);
+    return [];
+  }
 }
 
 export async function deleteVoiceSample(objectName: string) {
   await requireVoiceBucket().file(objectName).delete({ ignoreNotFound: true });
 }
-

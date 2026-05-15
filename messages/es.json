@@ -33,7 +33,29 @@
     "talkFrequency": "Frecuencia de charla",
     "much": "Mucho",
     "normal": "Normal",
-    "little": "Poco"
+    "little": "Poco",
+    "interestCultura": "🏛️ Arquitectura y Patrimonio",
+    "interestGastronomia": "🥘 Gastronomía Local",
+    "interestSalsa": "💃 Salsa y Baile",
+    "interestNaturaleza": "🌿 Parques y Naturaleza",
+    "interestCompras": "🛍️ Compras y Artesanías",
+    "interestArte": "🎨 Arte y Diseño",
+    "interestHistoria": "📜 Historia y Museos",
+    "interestBebidas": "🥤 Bebidas Locales",
+    "styleCaminante": "🚶 Caminante",
+    "styleCaminanteDesc": "A pie",
+    "styleRelajado": "🚗 Relajado",
+    "styleRelajadoDesc": "Cómodo",
+    "vibeTranquilo": "Relajado",
+    "vibeExplorador": "Curioso",
+    "vibeFiesta": "Energético",
+    "savingPreferences": "Guardando...",
+    "preferencesSaved": "¡Preferencias guardadas!",
+    "preferencesError": "No se pudieron guardar las preferencias",
+    "finishRecording": "Terminar",
+    "arMode": "Realidad Aumentada",
+    "language": "Idioma",
+    "travelProfile": "Perfil de viajero"
   },
   "Map": {
     "enableLocationTitle": "Activa tu ubicación",
@@ -52,7 +74,15 @@
     "expandHint": "Toca 'Expandir' para que te cuente un secreto sobre este lugar...",
     "caliHeritage": "Patrimonio de Cali",
     "customRoute": "Ruta Personalizada",
-    "drawCustomRoute": "Trazar Ruta Personalizada"
+    "drawCustomRoute": "Trazar Ruta Personalizada",
+    "askAIPlaceholder": "Pregúntale lo que quieras...",
+    "destination": "Destino",
+    "viewRoute": "Ver Ruta",
+    "removeRoute": "Quitar ruta",
+    "questionHistory": "¿Cuál es su historia?",
+    "questionNearby": "¿Qué hay cerca?",
+    "questionHours": "¿A qué hora cierran?",
+    "chatGreeting": "¡Hola! Soy tu guía de CaliGuía. Pregúntame lo que quieras sobre este lugar o elige una de las sugerencias."
   },
   "Panel": {
     "local": "Local",
@@ -63,6 +93,7 @@
     "radius": "Radio",
     "scanningHistory": "Escaneando historia...",
     "viewRoute": "Ver Ruta",
+    "removeRoute": "Quitar ruta",
     "expand": "Expandir",
     "nothingHereTitle": "Nada que ver por aquí",
     "nothingHereBody": "No hemos encontrado monumentos históricos en tu ubicación actual.",
@@ -80,6 +111,9 @@
     "shareLocationForPlaces": "Comparte tu ubicación para ver negocios cercanos.",
     "noHotels": "No se encontraron hoteles en la zona.",
     "perNight": "Por noche",
-    "allComunas": "Las 22 Comunas"
+    "allComunas": "Las 22 Comunas",
+    "itinerary": "Itinerario",
+    "stops": "{count} paradas",
+    "finalDestination": "Destino Final"
   }
 }

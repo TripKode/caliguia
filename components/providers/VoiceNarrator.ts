@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import type { LanguageCode } from "@/components/providers/ExperienceProvider";
 import { getActiveVoiceSample } from "@/components/providers/voiceSampleStore";
 
-export type NarrationType = "monument" | "route" | "danger" | "info" | "welcome";
+export type NarrationType = "monument" | "route" | "danger" | "info" | "welcome" | "chat";
 
 export interface NarrationEvent {
   id: string;
@@ -126,8 +126,8 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const languageRef = useRef<LanguageCode>(language);
   const availableVoicesRef = useRef<CaliVoice[]>([]);
   const selectedVoiceIdRef = useRef<string>("");
-  const [gradioVoiceReady, setGradioVoiceReady] = useState(false);
-  const gradioVoiceReadyRef = useRef(false);
+  const [gradioVoiceReady, setGradioVoiceReady] = useState(true);
+  const gradioVoiceReadyRef = useRef(true);
 
   // Keep refs current
   useEffect(() => { languageRef.current = language; }, [language]);
@@ -146,21 +146,8 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
 
   useEffect(() => {
     const loadGradioVoice = async () => {
-      if (status !== "authenticated") {
-        setGradioVoiceReady(false);
-        return;
-      }
-
-      try {
-        const [preferencesRes, sample] = await Promise.all([
-          fetch("/api/users/me/preferences", { cache: "no-store" }),
-          getActiveVoiceSample(),
-        ]);
-        const preferences = preferencesRes.ok ? await preferencesRes.json() : null;
-        setGradioVoiceReady(Boolean(preferences?.activeProviderVoiceId || sample));
-      } catch {
-        setGradioVoiceReady(false);
-      }
+      // With default voices enabled in the backend, we can assume it's always ready
+      setGradioVoiceReady(true);
     };
 
     const onVoiceChanged = () => loadGradioVoice();
@@ -207,6 +194,8 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     window.speechSynthesis?.cancel();
     if (audioRef.current) {
       audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
       audioRef.current.removeAttribute("src");
       audioRef.current.load();
     }
@@ -247,54 +236,54 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
       setTimeout(() => playNext(), 900);
     };
 
-    if (!gradioVoiceReady) {
-      window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
-        detail: { reason: "missing-voice", narration: event },
-      }));
-      finishAndContinue();
-      return;
-    }
-
-    // Safari Keep-Alive: Start playing silence immediately to keep the audio context "hot"
     const audio = ensureAudioElement();
     audio.muted = true;
     audio.src = SILENT_WAV_DATA_URL;
     audio.play().catch(() => { /* ignore */ });
-
-    // Web Audio API context for robust playback
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     
-    getActiveVoiceSample()
-      .then(sample => {
-        const formData = new FormData();
-        if (sample) {
-          formData.append("file", new File([sample], "caliguia-reference-voice.webm", { type: sample.type || "audio/webm" }));
-        }
-        formData.append("text", event.text);
-        formData.append("language", languageRef.current);
-        return fetch("/api/voice/speech", {
-          method: "POST",
-          body: formData,
-        });
-      })
+    window.dispatchEvent(new CustomEvent("caliguia:voice-status", { 
+      detail: { status: "generating", message: "Generando voz..." } 
+    }));
+
+    const formData = new FormData();
+    formData.append("text", event.text);
+    formData.append("language", languageRef.current);
+
+    fetch("/api/voice/speech", {
+      method: "POST",
+      body: formData,
+    })
       .then(async res => {
+        // Clear "Generating..." status
+        window.dispatchEvent(new CustomEvent("caliguia:voice-status", { 
+          detail: { status: "ready", message: "" } 
+        }));
         if (!res.ok) {
           const errorBody = await res.json().catch(() => null);
           throw new Error(errorBody?.message || errorBody?.error || `Voice generation failed (${res.status})`);
         }
         
-        const arrayBuffer = await res.arrayBuffer();
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
-        
-        source.onended = finishAndContinue;
-        source.start(0);
-        
-        // Keep reference to stop if needed
-        (window as any)._activeCaliSource = source;
+        const audioBlob = await res.blob();
+        if (!audioBlob.size) {
+          throw new Error("F5-TTS devolvió un audio vacío");
+        }
+
+        if (audioUrlRef.current) {
+          URL.revokeObjectURL(audioUrlRef.current);
+        }
+
+        const audioUrl = URL.createObjectURL(audioBlob);
+        audioUrlRef.current = audioUrl;
+        audio.pause();
+        audio.muted = false;
+        audio.src = audioUrl;
+        audio.onended = finishAndContinue;
+        audio.onerror = () => {
+          notifyVoicePlaybackError(event, audio.error || new Error("No se pudo reproducir el audio generado"));
+          finishAndContinue();
+        };
+
+        return audio.play();
       })
       .catch(error => {
         if (!isPlayingRef.current) return;
@@ -305,13 +294,6 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
-      if (!gradioVoiceReadyRef.current) {
-        window.dispatchEvent(new CustomEvent("caliguia:voice-required", {
-          detail: { reason: "missing-voice", narration: event },
-        }));
-        return;
-      }
-
       const narration: NarrationEvent = {
         ...event,
         id: crypto.randomUUID(),

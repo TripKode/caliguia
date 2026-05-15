@@ -43,7 +43,7 @@ export interface Landmark {
 
 export interface NarrationEvent {
     id: string;
-    type: "monument" | "route" | "danger" | "info" | "welcome";
+    type: "monument" | "route" | "danger" | "info" | "welcome" | "chat";
     text: string;
     title?: string;
     icon?: string;
@@ -113,6 +113,10 @@ export interface MapContextType {
     verbosity: VerbosityLevel;
     setVerbosity: (v: VerbosityLevel) => void;
     toggle3D: () => void;
+    activeRouteLandmark: string | null;
+    setActiveRouteLandmark: (name: string | null) => void;
+    routeInterestPoints: any[];
+    setRouteInterestPoints: (points: any[]) => void;
 }
 
 export interface CaliEvent {
