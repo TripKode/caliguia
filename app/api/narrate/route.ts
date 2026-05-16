@@ -75,11 +75,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
   }
 
-  const { prompt, type = "info", language = "es" } = body as {
-    prompt: string;
+  const { prompt, messages, type = "info", language = "es" } = body as {
+    prompt?: string;
+    messages?: { role: "user" | "assistant" | "system"; content: string }[];
     type?: string;
     language?: Lang;
   };
+
+  if (!prompt && !messages) {
+    return NextResponse.json({ error: "Missing prompt or messages" }, { status: 400 });
+  }
 
   const lang: Lang = (["es", "en", "pt"].includes(language) ? language : "es") as Lang;
   const persona = LANGUAGE_PERSONA[lang];
@@ -87,22 +92,33 @@ export async function POST(req: NextRequest) {
   const systemPrompt = `${persona}\n\n${typeInstruction}`;
 
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: type === "chat" ? 400 : 80,
-        temperature: 0.72,
-      }),
-    });
+      const fullSystemPrompt = prompt ? `${systemPrompt}\n\n${prompt}` : systemPrompt;
+      const groqMessages = messages 
+        ? [
+            { role: "system", content: fullSystemPrompt },
+            ...messages.map(m => ({ 
+              role: m.role === "assistant" ? "assistant" : "user" as "assistant" | "user", 
+              content: m.content 
+            }))
+          ]
+        : [
+            { role: "system", content: fullSystemPrompt },
+            { role: "user", content: prompt! },
+          ];
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: groqMessages,
+          max_tokens: type === "chat" ? 400 : 80,
+          temperature: 0.72,
+        }),
+      });
 
     if (!response.ok) {
       const errorText = await response.text();

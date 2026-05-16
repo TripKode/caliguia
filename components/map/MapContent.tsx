@@ -134,7 +134,14 @@ function MapContent() {
     const [routePins, setRoutePins] = useState<any[]>([]);
     const routeMarkersRef = useRef<any[]>([]);
 
-
+    const clearChat = (landmarkName: string) => {
+        setConversation([]);
+        sessionStorage.removeItem(`chat_${landmarkName}`);
+        if (authStatus === "authenticated") {
+            fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(landmarkName)}`, { method: "DELETE" })
+                .catch(err => console.error("Error clearing chat:", err));
+        }
+    };
 
 
     const askAI = async (question: string, landmarkName: string) => {
@@ -176,7 +183,11 @@ function MapContent() {
         `;
 
         try {
-            const response = await fetchNarration(prompt, "chat", language || "es");
+            const history = conversation.map(m => ({ 
+                role: m.role === 'ai' ? 'assistant' : 'user' as "assistant" | "user", 
+                content: m.text 
+            }));
+            const response = await fetchNarration(prompt, "chat", language || "es", history);
             if (response) {
                 const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
                 const finalChat = [...updatedChat, aiMsg];
@@ -408,37 +419,11 @@ function MapContent() {
                 if (initialMessages.length === 0 && speak) {
                     const landmark = localLandmarks.find(l => l.name === expandedLandmark);
                     if (landmark) {
-                        const response = await fetchNarration(landmark.prompt, "chat", language || "es");
-                        if (response) {
-                            speak({ 
-                                type: "chat", 
-                                text: response, 
-                                title: expandedLandmark, 
-                                icon: "✨" 
-                            });
-                            // Add to local state for chat UI
-                            const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
-                            setConversation([aiMsg]);
-                            
-                            // Save to session/DB as the first message
-                            if (authStatus === "authenticated") {
-                                fetch('/api/users/me/chat-history', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ landmarkName: expandedLandmark, messages: [aiMsg] })
-                                });
-                            } else {
-                                sessionStorage.setItem(`chat_${expandedLandmark}`, JSON.stringify([aiMsg]));
-                            }
-                        }
-                    } else {
-                        // Fallback if landmark not found
-                        const greeting = t("chatGreeting");
                         speak({ 
                             type: "info", 
-                            text: greeting, 
+                            text: landmark.description, 
                             title: expandedLandmark, 
-                            icon: "✨" 
+                            icon: "🏛️" 
                         });
                     }
                 }
@@ -448,16 +433,6 @@ function MapContent() {
         }
     }, [expandedLandmark, authStatus, speak, t, language, localLandmarks]);
 
-    useEffect(() => {
-        if (expandedLandmark && currentNarration && currentNarration.text) {
-            // Avoid duplicates if the message is already in history
-            setConversation(prev => {
-                const alreadyExists = prev.some(m => m.text === currentNarration.text);
-                if (alreadyExists) return prev;
-                return [...prev, { role: 'ai', text: currentNarration.text }];
-            });
-        }
-    }, [expandedLandmark, currentNarration]);
 
     const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
     const tourStartMessage = useMemo(() => getDailyTourStartMessage(language), [language]);
@@ -704,22 +679,7 @@ function MapContent() {
                                         : tourStartMessage.body}
                                 </p>
 
-                                {voicePreference !== "unknown" && (
-                                    <div className="mb-6 grid grid-cols-3 gap-2 text-left">
-                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
-                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">Mapa</p>
-                                            <p className="mt-0.5 text-[12px] font-black text-zinc-700">Activo</p>
-                                        </div>
-                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
-                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">Voz</p>
-                                            <p className="mt-0.5 text-[12px] font-black text-zinc-700">Lista</p>
-                                        </div>
-                                        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-2">
-                                            <p className="text-[9px] font-black uppercase tracking-wider text-zinc-400">IA</p>
-                                            <p className="mt-0.5 text-[12px] font-black text-blue-600">Online</p>
-                                        </div>
-                                    </div>
-                                )}
+
 
                                 <div className="flex flex-col gap-3">
                                     <button
@@ -830,44 +790,66 @@ function MapContent() {
                                             )}
 
                                             <div className="p-8 flex flex-col gap-6">
+                                                {/* Landmark Details */}
+                                                <div>
+                                                    <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
+                                                        {landmark.description}
+                                                    </p>
+                                                    <p className="text-[14.5px] leading-relaxed text-zinc-700 font-medium">
+                                                        {landmark.history}
+                                                    </p>
+                                                </div>
+
                                                 {/* Chat History (Always visible if there are messages) */}
                                                 {conversation.length > 0 && (
-                                                    <div className="flex flex-col gap-3 max-h-[250px] overflow-y-auto pr-2 no-scrollbar border-t border-zinc-100 pt-4">
+                                                    <div className="flex flex-col gap-5 max-h-[300px] overflow-y-auto pr-2 no-scrollbar border-t border-black/5 pt-5">
                                                         {conversation.map((msg, i) => {
-                                                            // Parse [[Landmark]] in the text
                                                             const parts = msg.text.split(/(\[\[.*?\]\])/g);
-                                                            
-                                                            return (
-                                                                <motion.div
-                                                                    key={i}
-                                                                    initial={{ opacity: 0, x: msg.role === 'user' ? 10 : -10 }}
-                                                                    animate={{ opacity: 1, x: 0 }}
-                                                                    className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                                                                >
-                                                                    <div className={`text-[11px] px-3 py-1.5 rounded-2xl ${msg.role === 'user' ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-50 text-blue-700 font-medium'}`}>
-                                                                        {parts.map((part, idx) => {
-                                                                            if (part.startsWith('[[') && part.endsWith(']]')) {
-                                                                                const name = part.slice(2, -2);
-                                                                                const target = localLandmarks.find(l => l.name.toLowerCase() === name.toLowerCase());
-                                                                                if (target) {
-                                                                                    return (
-                                                                                        <button
-                                                                                            key={idx}
-                                                                                            onClick={() => handleToggleRoute(target.name)}
-                                                                                            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded-md bg-blue-600 text-white font-black hover:bg-blue-700 transition-colors"
-                                                                                        >
-                                                                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                                                                                            {name}
-                                                                                        </button>
-                                                                                    );
+                                                            const placeParts = parts.filter(p => p.startsWith('[[') && p.endsWith(']]'));
+
+                                                            if (msg.role === 'user') {
+                                                                return (
+                                                                    <motion.div key={i} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col items-end">
+                                                                        <div className="text-[13px] px-4 py-2.5 rounded-[18px] rounded-br-[6px] bg-blue-600 text-white font-medium shadow-md shadow-blue-500/20 max-w-[85%]">
+                                                                            {msg.text}
+                                                                        </div>
+                                                                    </motion.div>
+                                                                );
+                                                            } else {
+                                                                return (
+                                                                    <motion.div key={i} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-start gap-2.5 bg-zinc-50/80 p-4 rounded-2xl border border-black/5">
+                                                                        <p className="text-[14px] leading-relaxed text-zinc-700 font-medium">
+                                                                            {parts.map((part, idx) => {
+                                                                                if (part.startsWith('[[') && part.endsWith(']]')) {
+                                                                                    return <span key={idx} className="text-blue-600 font-bold">{part.slice(2, -2)}</span>;
                                                                                 }
-                                                                                return name;
-                                                                            }
-                                                                            return part;
-                                                                        })}
-                                                                    </div>
-                                                                </motion.div>
-                                                            );
+                                                                                return <span key={idx}>{part}</span>;
+                                                                            })}
+                                                                        </p>
+                                                                        {placeParts.length > 0 && (
+                                                                            <div className="flex flex-wrap gap-2 mt-1">
+                                                                                {placeParts.map((part, idx) => {
+                                                                                    const name = part.slice(2, -2);
+                                                                                    const target = localLandmarks.find(l => l.name.toLowerCase() === name.toLowerCase());
+                                                                                    if (target) {
+                                                                                        return (
+                                                                                            <button
+                                                                                                key={idx}
+                                                                                                onClick={() => handleToggleRoute(target.name)}
+                                                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-blue-100 text-blue-600 font-bold hover:bg-blue-50 transition-colors shadow-sm"
+                                                                                            >
+                                                                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                                                                                                Ruta a {name}
+                                                                                            </button>
+                                                                                        );
+                                                                                    }
+                                                                                    return null;
+                                                                                })}
+                                                                            </div>
+                                                                        )}
+                                                                    </motion.div>
+                                                                );
+                                                            }
                                                         })}
                                                     </div>
                                                 )}
@@ -900,8 +882,21 @@ function MapContent() {
                                                                 onChange={(e) => setUserQuestion(e.target.value)}
                                                                 onKeyDown={(e) => e.key === 'Enter' && askAI(userQuestion, landmark.name)}
                                                                 placeholder={t("askAIPlaceholder")}
-                                                                className="w-full bg-zinc-100 border-none rounded-2xl px-5 py-4 text-[14px] font-medium focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-zinc-400"
+                                                                className="w-full bg-zinc-100 border-none rounded-2xl pl-5 pr-20 py-4 text-[14px] font-medium focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-zinc-400"
                                                             />
+                                                            {conversation.length > 0 && (
+                                                                <button
+                                                                    onClick={() => clearChat(landmark.name)}
+                                                                    title="Limpiar chat"
+                                                                    className="absolute right-[52px] top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-red-500 hover:bg-black/5 rounded-lg transition-colors"
+                                                                >
+                                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                        <path d="M3 6h18" />
+                                                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                                                    </svg>
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 onClick={() => askAI(userQuestion, landmark.name)}
                                                                 disabled={!userQuestion.trim() || isAsking}

@@ -91,7 +91,10 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const preferred = session?.preferredLanguage;
-    if (preferred && LANGUAGES[preferred] && preferred !== locale) {
+    const localPreferred = sessionStorage.getItem(LANGUAGE_STORAGE_KEY) as LanguageCode | null;
+    
+    // We only force a redirect from the session if the user hasn't explicitly set a local preference
+    if (preferred && LANGUAGES[preferred] && preferred !== locale && !localPreferred) {
       setLanguageState(preferred);
       document.cookie = `caliguia_locale=${preferred}; path=/; max-age=31536000; samesite=lax`;
       router.replace(pathname, { locale: preferred });
@@ -135,7 +138,6 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
 
     if (status !== "authenticated" || (!session?.user?.id && !session?.user?.email)) {
       router.replace(pathname, { locale: nextLanguage });
-      router.refresh();
       return true;
     }
 
@@ -158,7 +160,6 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
     });
 
     router.replace(pathname, { locale: nextLanguage });
-    router.refresh();
     return true;
   }, [pathname, router, session?.user?.email, session?.user?.id, status, update]);
 

@@ -174,16 +174,26 @@ function getPlaceTypeLabel(types: string[] = [], primaryType?: string, language:
 
 function getPlaceSummary(place: any, typeLabel: string, language: "es" | "en" | "pt" = "es") {
     if (place.editorialSummary) return place.editorialSummary;
+    
+    const ratingEn = place.rating ? `It has a rating of ${place.rating} stars` : '';
+    const reviewsEn = place.user_ratings_total ? ` based on ${place.user_ratings_total} reviews` : '';
+    const statusEn = place.business_status === "OPERATIONAL" ? "open to the public" : "currently closed";
+    
+    const ratingPt = place.rating ? `Tem uma classificação de ${place.rating} estrelas` : '';
+    const reviewsPt = place.user_ratings_total ? ` com base em ${place.user_ratings_total} avaliações` : '';
+    const statusPt = place.business_status === "OPERATIONAL" ? "aberto ao público" : "atualmente fechado";
+    
+    const ratingEs = place.rating ? `Cuenta con una calificación de ${place.rating} estrellas` : '';
+    const reviewsEs = place.user_ratings_total ? ` basada en ${place.user_ratings_total} opiniones` : '';
+    const statusEs = place.business_status === "OPERATIONAL" ? "abierto al público" : "actualmente cerrado";
+
     if (language === "en") {
-        if (place.formattedAddress) return `Nearby ${typeLabel.toLowerCase()} in Santiago de Cali. Address registered by Google Places: ${place.formattedAddress}.`;
-        return `Nearby ${typeLabel.toLowerCase()} registered by Google Places in Santiago de Cali.`;
+        return `This is a recognized ${typeLabel.toLowerCase()} located in Santiago de Cali. ${ratingEn}${reviewsEn}. The location is ${statusEn}. Ask the AI guide below for its history, hidden gems, or nearby attractions!`;
     }
     if (language === "pt") {
-        if (place.formattedAddress) return `${typeLabel} próximo em Santiago de Cali. Endereço registrado pelo Google Places: ${place.formattedAddress}.`;
-        return `${typeLabel} próximo registrado pelo Google Places em Santiago de Cali.`;
+        return `Este é um(a) reconhecido(a) ${typeLabel.toLowerCase()} localizado(a) em Santiago de Cali. ${ratingPt}${reviewsPt}. O local está ${statusPt}. Pergunte ao guia de IA abaixo sobre sua história, segredos ou atrações próximas!`;
     }
-    if (place.formattedAddress) return `${typeLabel} cercano en Santiago de Cali. Dirección registrada por Google Places: ${place.formattedAddress}.`;
-    return `${typeLabel} cercano registrado por Google Places en Santiago de Cali.`;
+    return `Este es un reconocido espacio de ${typeLabel.toLowerCase()} ubicado en Santiago de Cali. ${ratingEs}${reviewsEs}. El lugar se encuentra ${statusEs}. ¡Pregúntale al guía interactivo a continuación sobre su historia, curiosidades o qué hacer cerca!`;
 }
 
 function getPlacePhotos(place: any) {

@@ -398,13 +398,14 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
 export async function fetchNarration(
   prompt: string,
   type: NarrationType,
-  language: LanguageCode = "es"
+  language: LanguageCode = "es",
+  messages?: { role: "user" | "assistant" | "system"; content: string }[]
 ): Promise<string | null> {
   try {
     const res = await fetch("/api/narrate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, type, language }),
+      body: JSON.stringify({ prompt, type, language, messages }),
     });
     if (!res.ok) return null;
     const data = await res.json();

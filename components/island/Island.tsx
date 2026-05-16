@@ -81,6 +81,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [showInput, setShowInput] = useState(false);
   const [showVoiceDropdown, setShowVoiceDropdown] = useState(false);
   const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
+  const [targetLanguage, setTargetLanguage] = useState<LanguageCode | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -144,7 +145,18 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     if (!voiceReadingText) {
       setVoiceReadingText(getFallbackVoiceReading(language));
     }
-  }, [session?.languageConfigured, session?.preferredLanguage, update, language, voiceReadingText]);
+
+    // Check if we arrived at the target language
+    const changingTo = sessionStorage.getItem("caliguia_changing_language") as LanguageCode | null;
+    if (changingTo) {
+      if (language === changingTo) {
+        sessionStorage.removeItem("caliguia_changing_language");
+        setTimeout(() => setTargetLanguage(null), 300); // give it a tiny bit of time to settle
+      } else if (!targetLanguage) {
+        setTargetLanguage(changingTo);
+      }
+    }
+  }, [session?.languageConfigured, session?.preferredLanguage, update, language, voiceReadingText, targetLanguage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -679,27 +691,31 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     setIsLoading(true);
     setIsSpeaking(false);
 
-    const systemPrompt = `Eres un asistente de navegación urbana para la ciudad de Cali, Colombia. 
-Eres conciso, amigable y útil. ${LANGUAGES[language].instruction} 
-IMPORTANTE: Cuando recomiendes un lugar, escríbelo entre dobles corchetes, por ejemplo: [[Nombre del Lugar]]. Esto me ayudará a mostrárselo al usuario como una opción de ruta.
-Máximo 3 oraciones por respuesta a menos que el usuario pida más detalle.
-${userProfile ? `\nPerfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}, Vibe: ${userProfile.vibe}.` : ""}
-${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/narrate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+          type: "chat",
+          language,
+          messages: newMessages.map(m => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content
+          })),
+          prompt: `
+            ${userProfile ? `Perfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}, Vibe: ${userProfile.vibe}.` : ""}
+            Contexto de ubicación/entorno: ${context || "Explorando la ciudad de Cali"}
+          `
         }),
       });
 
+      if (!response.ok) {
+        throw new Error("Chat request failed");
+      }
+
       const data = await response.json();
-      const reply = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "Sin respuesta.";
+      const reply = data.text || "Sin respuesta.";
 
       const assistantMsg: Message = { role: "assistant", content: reply, id: crypto.randomUUID() };
       const finalMessages = [...newMessages, assistantMsg];
@@ -717,7 +733,8 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
 
       const speakMs = Math.min(Math.max(reply.length * 55, 2000), 8000);
       setTimeout(() => setIsSpeaking(false), speakMs);
-    } catch {
+    } catch (error) {
+      console.error("Chat error:", error);
       const assistantMsg: Message = {
         role: "assistant",
         content: "Error de conexión. Intenta de nuevo.",
@@ -734,8 +751,39 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
     if (e.key === "Escape") setShowInput(false);
   };
 
+  const clearChat = useCallback(() => {
+    setMessages([]);
+    if (status === "authenticated") {
+      fetch("/api/users/me/chat-history?landmarkName=floating_island", { method: "DELETE" })
+        .catch(err => console.error("Error clearing chat history:", err));
+    }
+  }, [status]);
+
+
+  const LANGUAGE_CHANGING_TEXT: Record<LanguageCode, string> = {
+    es: "Cambiando idioma a Español...",
+    en: "Changing language to English...",
+    pt: "Mudando idioma para Português...",
+  };
+
   return (
     <>{/* Root Fragment */}
+      <AnimatePresence>
+        {targetLanguage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white/80 backdrop-blur-md pointer-events-auto"
+          >
+            <div className="w-12 h-12 rounded-full border-4 border-blue-500/30 border-t-blue-600 animate-spin mb-4" />
+            <h2 className="text-xl font-black text-zinc-800 tracking-tight">
+              {LANGUAGE_CHANGING_TEXT[targetLanguage]}
+            </h2>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="absolute left-1/2 top-2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 pointer-events-none sm:top-3"
         style={{ width: "min(420px, calc(100vw - 32px))" }}
       >
@@ -1120,8 +1168,9 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                             key={option.code}
                             type="button"
                             onClick={() => {
+                              setTargetLanguage(option.code);
+                              sessionStorage.setItem("caliguia_changing_language", option.code);
                               setLanguage(option.code);
-                              setShowLanguageDropdown(false);
                             }}
                             className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[12px] font-bold transition-colors ${language === option.code ? "bg-blue-50 text-blue-600" : "text-zinc-600 hover:bg-zinc-50"
                               }`}
@@ -1236,7 +1285,11 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
                           <button
                             key={option.code}
                             type="button"
-                            onClick={() => setLanguage(option.code)}
+                            onClick={() => {
+                              setTargetLanguage(option.code);
+                              sessionStorage.setItem("caliguia_changing_language", option.code);
+                              setLanguage(option.code);
+                            }}
                             className={`flex h-7 items-center gap-1.5 rounded-lg px-2 text-[10px] font-black transition-colors ${language === option.code ? "bg-white text-blue-600 shadow-sm" : "text-zinc-500"
                               }`}
                             title={option.name}
@@ -1285,6 +1338,11 @@ ${context ? `\nContexto actual del usuario:\n${context}` : ""}`;
             )}
             <div className="flex items-center gap-2 mt-3" style={{ background: "rgba(0,0,0,0.04)", borderRadius: "12px", border: "1px solid rgba(0,0,0,0.07)", padding: "4px 4px 4px 12px" }}>
               <input ref={inputRef} type="text" value={inputValue} onChange={e => setInputValue(e.target.value)} onKeyDown={handleKey} placeholder={t("askAgent")} className="flex-1 text-base bg-transparent text-[12px] text-zinc-700 outline-none font-medium" />
+              {messages.length > 0 && (
+                <button onClick={clearChat} title="Limpiar chat" className="w-7 h-7 rounded-[9px] flex items-center justify-center shrink-0 hover:bg-black/5 transition-colors">
+                  <Trash2 className="w-3.5 h-3.5 text-zinc-400 hover:text-red-500 transition-colors" />
+                </button>
+              )}
               <button onClick={sendMessage} disabled={!inputValue.trim() || isLoading} className="w-7 h-7 rounded-[9px] flex items-center justify-center shrink-0" style={{ background: inputValue.trim() && !isLoading ? "#3b82f6" : "rgba(0,0,0,0.07)" }}>
                 {isLoading ? <div className="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={inputValue.trim() ? "white" : "#9ca3af"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>}
               </button>

@@ -90,3 +90,42 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export async function DELETE(req: NextRequest) {
+    const session = await auth();
+    const userId = session?.user?.id;
+    const email = session?.user?.email;
+  
+    if (!userId && !email) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const landmarkName = searchParams.get("landmarkName");
+
+    try {
+        const user = await (prisma.user as any).findUnique({
+            where: userId ? { id: userId } : { email },
+            select: { chatHistory: true }
+        });
+
+        let history = user?.chatHistory || [];
+        if (!Array.isArray(history)) history = [];
+
+        if (landmarkName) {
+            history = history.filter((h: any) => h.landmarkName !== landmarkName);
+        } else {
+            history = [];
+        }
+
+        await (prisma.user as any).update({
+            where: userId ? { id: userId } : { email },
+            data: { chatHistory: history }
+        });
+
+        return NextResponse.json({ success: true });
+    } catch (error: any) {
+        console.error("[ChatHistory] Error deleting chat:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
