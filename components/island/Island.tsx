@@ -140,7 +140,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       languageConfigured: session?.languageConfigured,
     };
     updateSessionRef.current = update;
-    
+
     // Initialize voice reading text with the correct language
     if (!voiceReadingText) {
       setVoiceReadingText(getFallbackVoiceReading(language));
@@ -774,7 +774,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white/80 backdrop-blur-md pointer-events-auto"
+            className="fixed inset-0 z-9999 flex flex-col items-center justify-center bg-white/80 backdrop-blur-md pointer-events-auto"
           >
             <div className="w-12 h-12 rounded-full border-4 border-blue-500/30 border-t-blue-600 animate-spin mb-4" />
             <h2 className="text-xl font-black text-zinc-800 tracking-tight">
@@ -854,10 +854,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                       }}
                       disabled={voiceCloneStatus === "uploading" || voiceCloneStatus === "recording" || voiceCloneStatus === "generating" || userVoices.filter(v => !v.isSystem).length >= 3}
                       className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-black transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 ${voiceCloneStatus === "recording"
-                          ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
-                          : userVoices.filter(v => !v.isSystem).length >= 3
-                            ? "bg-zinc-200 text-zinc-500"
-                            : "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
+                        ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
+                        : userVoices.filter(v => !v.isSystem).length >= 3
+                          ? "bg-zinc-200 text-zinc-500"
+                          : "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
                         }`}
                     >
                       {voiceCloneStatus === "uploading" || voiceCloneStatus === "generating" ? (
@@ -1026,9 +1026,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     ) : (
                       <div className="mt-2 min-h-9 rounded-xl bg-zinc-50 px-3 py-2 text-center">
                         <p className={`text-[11px] font-bold ${voiceCloneStatus === "ready" ? "text-emerald-600" :
-                            voiceCloneStatus === "error" ? "text-red-500" :
-                              voiceCloneStatus === "generating" ? "text-blue-600" :
-                                "text-zinc-500"
+                          voiceCloneStatus === "error" ? "text-red-500" :
+                            voiceCloneStatus === "generating" ? "text-blue-600" :
+                              "text-zinc-500"
                           }`}>
                           {voiceCloneStatus === "recording"
                             ? `Grabando ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`
@@ -1501,8 +1501,8 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
               </button>
 
               <p className={`mt-3 min-h-5 text-center text-[12px] font-bold ${voiceCloneStatus === "ready" ? "text-emerald-600" :
-                  voiceCloneStatus === "error" ? "text-red-500" :
-                    "text-zinc-400"
+                voiceCloneStatus === "error" ? "text-red-500" :
+                  "text-zinc-400"
                 }`}>
                 {voiceCloneStatus === "recording"
                   ? t("voiceRecordingHint", { time: String(Math.max(VOICE_SAMPLE_SECONDS - recordingSeconds, 0)) })
@@ -1687,13 +1687,12 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     <button
                       onClick={() => saveProfile(userProfile || { interests: [], style: 'caminante', vibe: 'explorador' })}
                       disabled={!isAuthenticated || isSavingProfile}
-                      className={`w-full py-4 rounded-2xl font-bold text-[14px] shadow-lg active:scale-95 transition-all disabled:cursor-not-allowed disabled:active:scale-100 ${
-                        profileSaveStatus === "saved"
+                      className={`w-full py-4 rounded-2xl font-bold text-[14px] shadow-lg active:scale-95 transition-all disabled:cursor-not-allowed disabled:active:scale-100 ${profileSaveStatus === "saved"
                           ? "bg-emerald-500 text-white shadow-emerald-500/20"
                           : profileSaveStatus === "error"
                             ? "bg-red-500 text-white shadow-red-500/20"
                             : "bg-blue-600 text-white shadow-blue-500/20 disabled:bg-zinc-300 disabled:shadow-none"
-                      }`}
+                        }`}
                     >
                       {isSavingProfile
                         ? t("savingPreferences")
