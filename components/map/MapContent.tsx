@@ -123,7 +123,8 @@ function MapContent() {
         routeInterestPoints,
         setRouteInterestPoints,
         places,
-        toggle3D
+        toggle3D,
+        requestLocation
     } = useMap();
 
     const { language } = useExperience();
@@ -723,7 +724,10 @@ function MapContent() {
 
                                 <div className="flex flex-col gap-3">
                                     <button
-                                        onClick={() => unlockSpeech(true)}
+                                        onClick={() => {
+                                            unlockSpeech(true);
+                                            requestLocation();
+                                        }}
                                         className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 text-[15px] font-black text-white shadow-lg shadow-blue-500/25 transition-all hover:bg-blue-700 active:scale-[0.98]"
                                     >
                                         {voicePreference === "unknown" ? t("activateVoiceGuide") : t("startTour")}

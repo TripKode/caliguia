@@ -867,16 +867,54 @@ export function UseHome() {
                 setCoords({ lat: cached.lat, lng: cached.lng, accuracy: cached.accuracy });
                 setStatus("tracking");
                 detectComuna(cached.lat, cached.lng);
-                if (!mapInstance.current) { try { await initMap(cached.lat, cached.lng); } catch (e) { if (isMounted) { setLocationError("No pudimos cargar Google Maps."); setStatus("error"); } } }
+                if (!mapInstance.current) {
+                    try {
+                        await initMap(cached.lat, cached.lng);
+                    } catch (e) {
+                        if (isMounted) {
+                            console.error("Failed to init map with cached location:", e);
+                            setLocationError("No pudimos cargar Google Maps.");
+                            setStatus("error");
+                        }
+                    }
+                }
+            } else {
+                // If no cache, still try to show Cali center map as fallback
+                if (!mapInstance.current) {
+                    try {
+                        await initMap(CALI_CENTER.lat, CALI_CENTER.lng);
+                    } catch (e) {
+                        console.error("Failed to init fallback map:", e);
+                    }
+                }
             }
+
             try {
-                if (navigator.permissions && navigator.permissions.query) {
+                if (navigator.permissions && typeof navigator.permissions.query === "function") {
                     const result = await navigator.permissions.query({ name: "geolocation" });
                     if (!isMounted) return;
-                    if (result.state === "granted") requestLocation({ silent: Boolean(cached) });
-                    result.onchange = () => { if (result.state === "granted") requestLocation({ silent: Boolean(readCachedLocation()) }); };
+                    if (result.state === "granted") {
+                        requestLocation({ silent: Boolean(cached) });
+                    } else if (result.state === "prompt" && !cached) {
+                        // For a better UX, if no cache and prompt, we wait for the user to click Start
+                        setStatus("idle");
+                    }
+                    
+                    result.onchange = () => {
+                        if (result.state === "granted") {
+                            requestLocation({ silent: Boolean(readCachedLocation()) });
+                        }
+                    };
+                } else {
+                    // Browser doesn't support permissions.query (like Safari/iOS Chrome sometimes)
+                    // If we have a cache, we already started. If not, just set idle.
+                    if (!cached) setStatus("idle");
+                    // We don't trigger requestLocation automatically here to avoid unexpected prompt on load
                 }
-            } catch { if (!cached && hasLocationOptIn()) setStatus("idle"); }
+            } catch (err) {
+                console.error("Permissions query failed:", err);
+                if (!cached && hasLocationOptIn()) setStatus("idle");
+            }
         };
         restoreLocation();
         return () => { isMounted = false; };
