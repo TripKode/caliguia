@@ -123,8 +123,7 @@ function MapContent() {
         routeInterestPoints,
         setRouteInterestPoints,
         places,
-        toggle3D,
-        requestLocation
+        toggle3D
     } = useMap();
 
     const { language } = useExperience();
