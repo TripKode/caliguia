@@ -40,6 +40,8 @@ import { useTranslations } from "next-intl";
 import { haversineDistance, getComunaCentroid } from "@/components/map/handlers";
 import { type RiskLevel } from "@/components/map/types";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
+import { BusinessModal } from "./BusinessModal";
+import { HotelModal } from "./HotelModal";
 
 export function Panel() {
     const t = useTranslations("Panel");
@@ -52,6 +54,8 @@ export function Panel() {
     const [loadingHotels, setLoadingHotels] = useState(false);
     const [hotelsPage, setHotelsPage] = useState(1);
     const [isItineraryExpanded, setIsItineraryExpanded] = useState(true);
+    const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
+    const [selectedHotel, setSelectedHotel] = useState<any | null>(null);
     const {
         activeTab,
         setActiveTab,
@@ -628,6 +632,7 @@ export function Panel() {
                                                         whileTap={{ scale: 0.995 }}
                                                         transition={{ duration: 0.16 }}
                                                         className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-zinc-50 cursor-pointer"
+                                                        onClick={() => setSelectedBusinessId(place.place_id)}
                                                     >
                                                         <div className="w-9 h-9 rounded-xl bg-blue-500/[0.07] border border-blue-500/10 flex items-center justify-center text-base shrink-0">
                                                             {getCategoryIcon(place.types)}
@@ -732,7 +737,7 @@ export function Panel() {
                                 {hotels.length > 0 && (
                                     <div className="flex flex-col gap-2">
                                         {hotels.slice((hotelsPage - 1) * 10, hotelsPage * 10).map((hotel, idx) => (
-                                            <div key={`hotel-${hotel.hotelId}-${idx}`} className="flex items-start gap-3 p-3 rounded-xl bg-white border border-zinc-100 shadow-sm transition-colors hover:bg-zinc-50 cursor-pointer">
+                                            <div key={`hotel-${hotel.hotelId}-${idx}`} className="flex items-start gap-3 p-3 rounded-xl bg-white border border-zinc-100 shadow-sm transition-colors hover:bg-zinc-50 cursor-pointer" onClick={() => setSelectedHotel(hotel)}>
                                                 <div className="w-9 h-9 rounded-xl bg-purple-500/[0.07] border border-purple-500/10 flex items-center justify-center text-base shrink-0">
                                                     <Bed className="w-4 h-4 text-purple-600" />
                                                 </div>
@@ -904,6 +909,8 @@ export function Panel() {
                 )}
 
             </AnimatePresence>
+            <BusinessModal placeId={selectedBusinessId} onClose={() => setSelectedBusinessId(null)} />
+            <HotelModal hotel={selectedHotel} onClose={() => setSelectedHotel(null)} />
             <style>{`
             @keyframes pulse-bar {
               from { transform: scaleY(0.5); opacity: 0.6; }

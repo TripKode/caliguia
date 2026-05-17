@@ -115,5 +115,39 @@
     "itinerary": "Itinerario",
     "stops": "{count} paradas",
     "finalDestination": "Destino Final"
+  },
+  "BusinessModal": {
+    "loadingProfile": "Cargando perfil...",
+    "openNow": "Abierto Ahora",
+    "closed": "Cerrado",
+    "reviews": "{count} reseñas",
+    "visit": "VISITAR",
+    "giveOpinion": "Danos tu opinión",
+    "rateOnGoogle": "Califícanos en Google Maps",
+    "seeCatalog": "Ver Catálogo",
+    "exploreProducts": "Explora nuestros productos",
+    "instagram": "Instagram",
+    "facebook": "Facebook",
+    "tiktok": "TikTok",
+    "whatsapp": "WhatsApp",
+    "website": "Sitio Web",
+    "poweredBy": "Powered By"
+  },
+  "HotelModal": {
+    "yourStay": "Tu estadía",
+    "checkin": "Check-in",
+    "checkout": "Check-out",
+    "adults": "Adultos",
+    "rooms": "Habitaciones",
+    "bookOn": "Reservar en",
+    "redirecting": "✓ Redirigiendo...",
+    "perNight": "/noche",
+    "nightSingular": "{count} noche",
+    "nightPlural": "{count} noches",
+    "adultSingular": "{count} adulto",
+    "adultPlural": "{count} adultos",
+    "roomSingular": "{count} habitación",
+    "roomPlural": "{count} habitaciones",
+    "poweredBy": "Powered By"
   }
 }
