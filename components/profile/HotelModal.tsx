@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Star, Bed, Calendar, ExternalLink } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -100,8 +101,13 @@ export function HotelModal({ hotel, onClose }: HotelModalProps) {
     const [adults, setAdults] = useState(2);
     const [rooms, setRooms] = useState(1);
     const [clicking, setClicking] = useState<string | null>(null);
+    const [mounted, setMounted] = useState(false);
 
-    if (!hotel) return null;
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!hotel || !mounted) return null;
 
     const rating = hotel.reviews?.rating ?? 0;
     const count = hotel.reviews?.count;
@@ -136,13 +142,13 @@ export function HotelModal({ hotel, onClose }: HotelModalProps) {
     const adultLabel = adults === 1 ? t("adultSingular", { count: adults }) : t("adultPlural", { count: adults });
     const roomLabel = rooms === 1 ? t("roomSingular", { count: rooms }) : t("roomPlural", { count: rooms });
 
-    return (
+    return createPortal(
         <AnimatePresence>
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-9999 bg-black/60 backdrop-blur-sm flex flex-col items-center pt-[12vh] pb-[5vh] md:pt-[20vh] md:pb-[10vh] px-4"
+                className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex flex-col items-center pt-[9vh] pb-[5vh] md:pt-[14vh] md:pb-[10vh] px-4"
                 onClick={onClose}
             >
                 <motion.div
@@ -303,6 +309,7 @@ export function HotelModal({ hotel, onClose }: HotelModalProps) {
                     </div>
                 </motion.div>
             </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }

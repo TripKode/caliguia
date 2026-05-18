@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Star, MapPin, ExternalLink, Phone, Globe, BookOpen } from "lucide-react";
+import { X, Star, MapPin, ExternalLink, Phone, Globe, BookOpen, ArrowLeft, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useMap } from "@/hooks/UseMap";
 import { useTranslations } from "next-intl";
 
@@ -16,10 +17,21 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
     const { mapInstance } = useMap();
     const [details, setDetails] = useState<google.maps.places.PlaceResult | null>(null);
     const [loading, setLoading] = useState(false);
+    const [view, setView] = useState<"profile" | "catalog">("profile");
+    const [activeCategory, setActiveCategory] = useState("Todo");
+    const [mounted, setMounted] = useState(false);
+    const [galleryIndex, setGalleryIndex] = useState(0);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     useEffect(() => {
         if (!placeId || !mapInstance?.current) return;
         setDetails(null);
+        setView("profile");
+        setActiveCategory("Todo");
+        setGalleryIndex(0);
         setLoading(true);
         const service = new google.maps.places.PlacesService(mapInstance.current);
         service.getDetails(
@@ -36,21 +48,29 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
         );
     }, [placeId, mapInstance]);
 
-    if (!placeId) return null;
+    if (!placeId || !mounted) return null;
 
     const profilePic = details?.photos?.[0]?.getUrl({ maxWidth: 200, maxHeight: 200 }) || details?.icon;
-    const gallery = details?.photos?.slice(1, 3).map(p => p.getUrl({ maxWidth: 300, maxHeight: 300 })) || [];
+    const gallery = details?.photos?.map(p => p.getUrl({ maxWidth: 700, maxHeight: 500 })) || [];
+    const visibleGallery = gallery.length > 1
+        ? [gallery[galleryIndex % gallery.length], gallery[(galleryIndex + 1) % gallery.length]]
+        : gallery;
     const isOpen = details?.opening_hours?.isOpen?.() ?? true;
     const rating = details?.rating ?? 5;
     const totalReviews = details?.user_ratings_total ?? 0;
+    const visibleProducts = activeCategory === "Todo"
+        ? MOCK_PRODUCTS
+        : MOCK_PRODUCTS.filter(product => product.category === activeCategory);
+    const goToPreviousPhoto = () => setGalleryIndex(index => (index - 1 + gallery.length) % gallery.length);
+    const goToNextPhoto = () => setGalleryIndex(index => (index + 1) % gallery.length);
 
-    return (
+    return createPortal(
         <AnimatePresence>
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-9999 bg-black/60 backdrop-blur-sm flex flex-col items-center pt-[12vh] pb-[5vh] md:pt-[20vh] md:pb-[10vh] px-4"
+                className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex flex-col items-center pt-[9vh] pb-[5vh] md:pt-[14vh] md:pb-[10vh] px-4"
                 onClick={onClose}
             >
                 <motion.div
@@ -58,7 +78,7 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 20, scale: 0.95 }}
                     transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                    className="bg-[#f9fafb] w-full max-w-md rounded-[32px] shadow-2xl overflow-y-auto min-h-0 relative no-scrollbar shrink"
+                    className={`bg-[#f9fafb] w-full shadow-2xl overflow-y-auto min-h-0 relative no-scrollbar shrink transition-all ${view === "catalog" ? "max-w-6xl rounded-[22px] h-[82vh]" : "max-w-md rounded-[32px]"}`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Close Button */}
@@ -69,7 +89,93 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
                         <X size={18} strokeWidth={2.5} />
                     </button>
 
-                    {loading ? (
+                    {view === "catalog" ? (
+                        <div className="min-h-full bg-[#f7f6f3] text-zinc-950">
+                            <div className="sticky top-0 z-10 border-b border-zinc-200 bg-[#f7f6f3]/95 backdrop-blur px-4 py-4 md:px-8">
+                                <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
+                                    <div className="flex min-w-0 items-center gap-3">
+                                        <button
+                                            onClick={() => setView("profile")}
+                                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-800 shadow-sm transition-colors hover:bg-zinc-50"
+                                            aria-label="Volver al perfil"
+                                        >
+                                            <ArrowLeft size={20} />
+                                        </button>
+                                        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full border border-white bg-zinc-200 shadow-sm">
+                                            {profilePic ? (
+                                                <img src={profilePic} alt={details?.name || "Catálogo"} className="h-full w-full object-cover" />
+                                            ) : (
+                                                <div className="flex h-full w-full items-center justify-center">
+                                                    <BookOpen className="h-5 w-5 text-zinc-400" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-400">Catálogo</p>
+                                            <h2 className="truncate text-[17px] font-black leading-tight text-zinc-900">{details?.name || "Romeo Cargo Bike"}</h2>
+                                        </div>
+                                    </div>
+                                    <div className="shrink-0 text-right">
+                                        <p className="text-3xl font-black leading-none text-zinc-900">{MOCK_PRODUCTS.length}</p>
+                                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-400">Productos</p>
+                                    </div>
+                                </div>
+
+                                <div className="mx-auto mt-5 max-w-5xl">
+                                    <div className="flex h-14 items-center gap-3 border border-zinc-200 bg-white px-4 text-zinc-400">
+                                        <Search size={20} />
+                                        <input
+                                            placeholder="Buscar producto, SKU o categoría..."
+                                            className="h-full min-w-0 flex-1 bg-transparent text-[16px] font-medium text-zinc-800 outline-none placeholder:text-zinc-400"
+                                        />
+                                    </div>
+                                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                                        {MOCK_CATEGORIES.map(category => (
+                                            <button
+                                                key={category}
+                                                onClick={() => setActiveCategory(category)}
+                                                className={`h-9 shrink-0 border px-4 text-[11px] font-black uppercase tracking-[0.12em] transition-colors ${activeCategory === category ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 bg-white text-zinc-500 hover:text-zinc-900"}`}
+                                            >
+                                                {category}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mx-auto grid max-w-5xl grid-cols-1 gap-4 px-4 py-8 sm:grid-cols-2 lg:grid-cols-4 md:px-8">
+                                {visibleProducts.map(product => (
+                                    <article key={product.sku} className="overflow-hidden border border-zinc-200 bg-white shadow-sm">
+                                        <div className="relative aspect-square bg-zinc-100">
+                                            <img src={product.image} alt={product.name} className="h-full w-full object-cover" />
+                                            <span className="absolute right-3 top-3 rounded bg-emerald-500 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white">
+                                                Consultar
+                                            </span>
+                                            <span className="absolute bottom-3 left-3 bg-zinc-950/75 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-white">
+                                                {product.category}
+                                            </span>
+                                        </div>
+                                        <div className="border-b border-zinc-100 px-3 py-2">
+                                            <div className="flex gap-1 overflow-x-auto pb-1">
+                                                {product.thumbs.map((thumb, index) => (
+                                                    <div key={`${product.sku}-${index}`} className="h-11 w-11 shrink-0 border border-zinc-200 bg-zinc-100">
+                                                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="px-4 py-4">
+                                            <h3 className="min-h-[44px] text-[16px] font-black leading-tight text-zinc-950">{product.name}</h3>
+                                            <div className="mt-3 border-t border-zinc-200 pt-3">
+                                                <p className="text-[20px] font-black text-zinc-950">{product.price}</p>
+                                                <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.1em] text-zinc-400">SKU {product.sku}</p>
+                                            </div>
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
+                        </div>
+                    ) : loading ? (
                         <div className="flex flex-col items-center justify-center py-24">
                             <div className="w-10 h-10 border-4 border-zinc-200 border-t-zinc-800 rounded-full animate-spin mb-4" />
                             <p className="text-zinc-500 text-sm font-medium">{t("loadingProfile")}</p>
@@ -119,13 +225,35 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
                             </a>
 
                             {/* Photos Gallery */}
-                            {gallery.length > 0 && (
-                                <div className="flex gap-3 w-full mb-6">
-                                    {gallery.map((url, idx) => (
-                                        <div key={idx} className="flex-1 rounded-2xl overflow-hidden shadow-sm" style={{ aspectRatio: "4/3" }}>
-                                            <img src={url} alt="Gallery" className="w-full h-full object-cover" />
-                                        </div>
-                                    ))}
+                            {visibleGallery.length > 0 && (
+                                <div className="relative w-full mb-6">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {visibleGallery.map((url, idx) => (
+                                            <div key={`${url}-${idx}`} className="overflow-hidden rounded-2xl bg-zinc-100 shadow-sm ring-1 ring-black/5" style={{ aspectRatio: "4/3" }}>
+                                                <img src={url} alt={`${details?.name || "Negocio"} foto ${idx + 1}`} className="w-full h-full object-cover" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {gallery.length > 2 && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={goToPreviousPhoto}
+                                                className="absolute left-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white text-zinc-800 shadow-lg ring-1 ring-black/5 transition-transform active:scale-95"
+                                                aria-label="Foto anterior"
+                                            >
+                                                <ChevronLeft size={20} strokeWidth={2.5} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={goToNextPhoto}
+                                                className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white text-zinc-800 shadow-lg ring-1 ring-black/5 transition-transform active:scale-95"
+                                                aria-label="Siguiente foto"
+                                            >
+                                                <ChevronRight size={20} strokeWidth={2.5} />
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             )}
 
@@ -151,7 +279,7 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
                                 </a>
 
                                 {/* Catalog */}
-                                <button className="bg-white border border-zinc-200 rounded-xl p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors shadow-sm">
+                                <button onClick={() => setView("catalog")} className="bg-white border border-zinc-200 rounded-xl p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors shadow-sm">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 bg-zinc-900 rounded-lg flex items-center justify-center text-white">
                                             <BookOpen size={20} />
@@ -204,9 +332,94 @@ export function BusinessModal({ placeId, onClose }: BusinessModalProps) {
                     )}
                 </motion.div>
             </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }
+
+const MOCK_CATEGORIES = ["Todo", "Fashion", "Deportes"];
+
+const MOCK_PRODUCTS = [
+    {
+        sku: "CG-1048",
+        name: "Gorra Oveja Negra",
+        price: "$45.000",
+        category: "Fashion",
+        image: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1572307480813-ceb0e59d8325?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-2081",
+        name: "Gorras Urbanas",
+        price: "$47.000",
+        category: "Fashion",
+        image: "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1572307480813-ceb0e59d8325?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-3014",
+        name: "Gorras Deportivo Cali",
+        price: "$40.000",
+        category: "Deportes",
+        image: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1575428652377-a2d80e2277fc?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-4420",
+        name: "Gorras NY",
+        price: "$45.000",
+        category: "Fashion",
+        image: "https://images.unsplash.com/photo-1575428652377-a2d80e2277fc?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1575428652377-a2d80e2277fc?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-5109",
+        name: "Gorra Cabalgata Negra",
+        price: "$52.000",
+        category: "Fashion",
+        image: "https://images.unsplash.com/photo-1534778356534-d3d45b6df1da?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1534778356534-d3d45b6df1da?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-6193",
+        name: "Gorra Bike Trail",
+        price: "$49.000",
+        category: "Deportes",
+        image: "https://images.unsplash.com/photo-1544191696-15693072e10f?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1544191696-15693072e10f?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+    {
+        sku: "CG-7305",
+        name: "Pack Estadio Edición Cali",
+        price: "$58.000",
+        category: "Deportes",
+        image: "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80",
+        thumbs: [
+            "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=160&q=80",
+            "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=160&q=80",
+        ],
+    },
+];
 
 function SocialLink({ icon, title, href = "#" }: { icon: React.ReactNode; title: string; href?: string }) {
     return (
