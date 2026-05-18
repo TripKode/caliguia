@@ -5,22 +5,25 @@ import { listOfficialVoices } from "@/lib/voice-storage";
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   try {
-    const [user, officialVoices] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: session.user.id },
-        include: {
-          voiceClones: {
-            orderBy: { createdAt: "desc" },
-          },
+    const officialVoices = await listOfficialVoices();
+
+    if (!session?.user?.id) {
+      return NextResponse.json({
+        voices: officialVoices,
+        activeVoiceId: "system:jorge",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      include: {
+        voiceClones: {
+          orderBy: { createdAt: "desc" },
         },
-      }),
-      listOfficialVoices()
-    ]);
+      },
+    });
 
     // Combine system voices first, then user voices
     const allVoices = [...officialVoices, ...(user?.voiceClones || [])];

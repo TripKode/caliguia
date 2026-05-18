@@ -33,7 +33,9 @@ function compactTtsText(text: string) {
   return `${safeClip}.`;
 }
 
-async function getActiveProviderVoiceId(): Promise<string | null> {
+async function getActiveProviderVoiceId(requestedVoiceId?: string | null): Promise<string | null> {
+  if (requestedVoiceId?.startsWith("system:")) return requestedVoiceId;
+
   const session = await auth();
   const userId = session?.user?.id;
   const email = session?.user?.email;
@@ -113,6 +115,7 @@ export async function POST(req: NextRequest) {
   const file = form?.get("file");
   const text = form?.get("text");
   const language = form?.get("language");
+  const activeProviderVoiceId = form?.get("activeProviderVoiceId");
   const reference_text = form?.get("reference_text") as string || "Hola, soy tu guía de Cali. Hoy caminaremos con calma, curiosidad y mucho sabor local.";
 
   if (file instanceof File && !isAudioFile(file)) {
@@ -139,13 +142,15 @@ export async function POST(req: NextRequest) {
 
   const startTime = Date.now();
   try {
-    const activeProviderVoiceId = await getActiveProviderVoiceId();
-    console.log(`[voice/speech] Starting TTS for text: "${ttsText.slice(0, 50)}...", chars=${ttsText.length}, voiceId: ${activeProviderVoiceId}`);
+    const selectedVoiceId = await getActiveProviderVoiceId(
+      typeof activeProviderVoiceId === "string" ? activeProviderVoiceId : null
+    );
+    console.log(`[voice/speech] Starting TTS for text: "${ttsText.slice(0, 50)}...", chars=${ttsText.length}, voiceId: ${selectedVoiceId}`);
     
-    const savedSample = file instanceof File ? null : await getSavedVoiceSample(activeProviderVoiceId);
+    const savedSample = file instanceof File ? null : await getSavedVoiceSample(selectedVoiceId);
     const speakerFile = file instanceof File ? file : savedSample?.blob;
     const speakerFileName = file instanceof File ? file.name : savedSample?.fileName;
-    const voiceId = activeProviderVoiceId || savedSample?.voiceId;
+    const voiceId = selectedVoiceId || savedSample?.voiceId;
     const savedReferenceText = savedSample?.referenceText;
 
     if (!speakerFile) {

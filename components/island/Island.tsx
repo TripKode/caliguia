@@ -12,7 +12,7 @@ import {
 } from "../providers/ExperienceProvider";
 import { useMap } from "@/hooks/UseMap";
 import { saveActiveVoiceSample } from "@/components/providers/voiceSampleStore";
-import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck } from "lucide-react";
+import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Message {
@@ -35,6 +35,15 @@ interface AIFloatingIslandProps {
 // ─── Constants ─────────────────────────────────────────────────────────────
 const BAR_COUNT = 5;
 const VOICE_SAMPLE_SECONDS = 12;
+const ACTIVE_PROVIDER_VOICE_STORAGE_KEY = "caliguia_active_provider_voice_id";
+const FLOATING_ISLAND_CHAT_NAME = "floating_island";
+const FLOATING_ISLAND_CHAT_STORAGE_KEY = "caliguia_chat_floating_island";
+const RISK_CONTEXT_LABELS = {
+  safe: "segura",
+  low: "baja",
+  medium: "moderada",
+  high: "alta",
+} as const;
 const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; flag: string; name: string }> = [
   { code: "es", label: "ES", flag: "co", name: "Español" },
   { code: "en", label: "EN", flag: "us", name: "Inglés" },
@@ -63,6 +72,43 @@ function getFallbackVoiceReading(language: LanguageCode) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+function getMessageLandmarkTags(content: string) {
+  return Array.from(content.matchAll(/\[\[(.*?)\]\]/g))
+    .map(match => match[1]?.trim())
+    .filter((name): name is string => Boolean(name));
+}
+
+function getMessageTextWithoutTags(content: string) {
+  return content
+    .replace(/\[\[.*?\]\]/g, "")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function loadFloatingIslandGuestChat(): Message[] {
+  try {
+    const raw = localStorage.getItem(FLOATING_ISLAND_CHAT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFloatingIslandGuestChat(messages: Message[]) {
+  localStorage.setItem(FLOATING_ISLAND_CHAT_STORAGE_KEY, JSON.stringify(messages));
+}
+
+function getSafetyAlertText(currentComuna: any) {
+  if (!currentComuna || !["medium", "high"].includes(currentComuna.risk)) return "";
+  if (currentComuna.risk === "high") {
+    return `Estás en ${currentComuna.name}, una zona de riesgo alto. Mantente en vías principales y cuida tus pertenencias.`;
+  }
+  return `Estás en ${currentComuna.name}, una zona de riesgo moderado. Muévete con atención y prefiere áreas concurridas.`;
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute, isScanningAR = false }: AIFloatingIslandProps) {
   const t = useTranslations("Island");
@@ -74,6 +120,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     verbosity,
     setVerbosity,
     narratorSpeaking,
+    coords,
+    currentComuna,
+    comunas,
+    places,
   } = useMap();
 
   const toggleExperienceMode = () => setExperienceMode(experienceMode === "ar" ? "map" : "ar");
@@ -231,18 +281,14 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   }, []);
 
   const fetchVoices = useCallback(async () => {
-    if (status !== "authenticated") {
-      setIsLoadingVoices(false);
-      return;
-    }
-
     setIsLoadingVoices(true);
     try {
       const res = await fetch("/api/users/me/voices");
       const data = await res.json();
       if (data.voices) {
         setUserVoices(data.voices);
-        setActiveVoiceId(data.activeVoiceId);
+        const savedGuestVoiceId = localStorage.getItem(ACTIVE_PROVIDER_VOICE_STORAGE_KEY);
+        setActiveVoiceId(data.activeVoiceId || savedGuestVoiceId || data.voices[0]?.id || null);
       }
     } catch (e) {
       console.error(e);
@@ -253,6 +299,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
   const selectVoice = useCallback(async (voiceId: string) => {
     setActiveVoiceId(voiceId);
+    localStorage.setItem(ACTIVE_PROVIDER_VOICE_STORAGE_KEY, voiceId);
 
     // Clear local cache for voice samples to avoid the "2620 bytes" conflict
     await saveActiveVoiceSample(null as any);
@@ -280,17 +327,57 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
   // Load chat history if authenticated
   useEffect(() => {
-    if (status === "authenticated" && showInput && messages.length === 0) {
-      fetch("/api/users/me/chat-history?landmarkName=floating_island")
+    if (!showInput || messages.length > 0) return;
+
+    if (status === "authenticated") {
+      const guestMessages = loadFloatingIslandGuestChat();
+      if (guestMessages.length > 0) {
+        setMessages(guestMessages);
+        fetch("/api/users/me/chat-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ landmarkName: FLOATING_ISLAND_CHAT_NAME, messages: guestMessages }),
+        })
+          .then(res => {
+            if (res.ok) localStorage.removeItem(FLOATING_ISLAND_CHAT_STORAGE_KEY);
+          })
+          .catch(err => console.error("Error migrating floating island chat:", err));
+        return;
+      }
+
+      fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(FLOATING_ISLAND_CHAT_NAME)}`)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (data?.messages) {
-            setMessages(data.messages);
-          }
+          if (data?.messages) setMessages(data.messages);
         })
         .catch(err => console.error("Error loading chat history:", err));
+      return;
+    }
+
+    if (status === "unauthenticated") {
+      setMessages(loadFloatingIslandGuestChat());
     }
   }, [status, showInput, messages.length]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+
+    const guestMessages = loadFloatingIslandGuestChat();
+    if (guestMessages.length === 0) return;
+
+    fetch("/api/users/me/chat-history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ landmarkName: FLOATING_ISLAND_CHAT_NAME, messages: guestMessages }),
+    })
+      .then(res => {
+        if (res.ok) {
+          localStorage.removeItem(FLOATING_ISLAND_CHAT_STORAGE_KEY);
+          if (messages.length === 0) setMessages(guestMessages);
+        }
+      })
+      .catch(err => console.error("Error migrating floating island chat:", err));
+  }, [status, messages.length]);
 
   const handleLandmarkClick = (name: string) => {
     window.dispatchEvent(new CustomEvent("caliguia:show-landmark-route", { detail: { name } }));
@@ -687,10 +774,30 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     const userMsg: Message = { role: "user", content: text, id: crypto.randomUUID() };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
+    if (status !== "authenticated") {
+      saveFloatingIslandGuestChat(newMessages);
+    }
     setInputValue("");
     setIsLoading(true);
     setIsSpeaking(false);
 
+    const currentRiskLabel = currentComuna
+      ? RISK_CONTEXT_LABELS[currentComuna.risk as keyof typeof RISK_CONTEXT_LABELS] || currentComuna.risk
+      : "desconocida";
+    const highRiskComunas = comunas
+      .filter(comuna => comuna.risk === "high")
+      .slice(0, 8)
+      .map(comuna => `${comuna.name}: ${comuna.description}`)
+      .join(" | ");
+    const nearbyPlaces = places.slice(0, 6).map(place => place.name).join(", ");
+    const safetyContext = `
+      Contexto de seguridad y ubicación actual:
+      ${coords ? `Coordenadas actuales: lat ${coords.lat.toFixed(5)}, lng ${coords.lng.toFixed(5)}, precisión ${Math.round(coords.accuracy)}m.` : "El usuario aún no compartió coordenadas precisas."}
+      ${currentComuna ? `Comuna actual: ${currentComuna.name}. Riesgo: ${currentRiskLabel}. Descripción de seguridad: ${currentComuna.description}. Barrios conocidos: ${currentComuna.barrios?.slice?.(0, 8).join(", ") || "sin barrios cargados"}.` : "No se detectó comuna actual."}
+      Mapa de calor y comunas: las comunas con riesgo alto pesan más en el heatmap de seguridad. Comunas de alta precaución: ${highRiskComunas || "sin datos de alta precaución cargados"}.
+      Lugares/negocios cercanos detectados: ${nearbyPlaces || "sin lugares cercanos cargados"}.
+      Instrucción de seguridad: si el usuario está en riesgo alto o moderado, incluye una alerta breve, amable y no alarmista antes de recomendar rutas o lugares. Recomienda vías principales, zonas concurridas, cuidar pertenencias y evitar caminar solo de noche cuando aplique.
+    `;
 
     try {
       const response = await fetch("/api/narrate", {
@@ -706,6 +813,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
           prompt: `
             ${userProfile ? `Perfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}, Vibe: ${userProfile.vibe}.` : ""}
             Contexto de ubicación/entorno: ${context || "Explorando la ciudad de Cali"}
+            ${safetyContext}
+            Responde con tono amable, cercano y natural, como si estuvieras acompañando a la persona con calma.
+            Si vas a recomendar lugares, no integres sus nombres dentro de la frase principal. Escribe primero un mensaje humano sin nombres de lugares, y al final agrega solo las recomendaciones en formato [[Nombre exacto del lugar]].
           `
         }),
       });
@@ -720,6 +830,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       const assistantMsg: Message = { role: "assistant", content: reply, id: crypto.randomUUID() };
       const finalMessages = [...newMessages, assistantMsg];
       setMessages(finalMessages);
+      if (status !== "authenticated") {
+        saveFloatingIslandGuestChat(finalMessages);
+      }
       setIsSpeaking(true);
 
       // Persist to DB if authenticated
@@ -727,7 +840,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
         fetch("/api/users/me/chat-history", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ landmarkName: "floating_island", messages: finalMessages })
+          body: JSON.stringify({ landmarkName: FLOATING_ISLAND_CHAT_NAME, messages: finalMessages })
         }).catch(err => console.error("Error persisting general chat:", err));
       }
 
@@ -740,11 +853,15 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
         content: "Error de conexión. Intenta de nuevo.",
         id: crypto.randomUUID(),
       };
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages(prev => {
+        const next = [...prev, assistantMsg];
+        if (status !== "authenticated") saveFloatingIslandGuestChat(next);
+        return next;
+      });
     } finally {
       setIsLoading(false);
     }
-  }, [inputValue, messages, isLoading, context, language, status]);
+  }, [inputValue, messages, isLoading, context, language, status, userProfile, coords, currentComuna, comunas, places]);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") sendMessage();
@@ -754,8 +871,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const clearChat = useCallback(() => {
     setMessages([]);
     if (status === "authenticated") {
-      fetch("/api/users/me/chat-history?landmarkName=floating_island", { method: "DELETE" })
+      fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(FLOATING_ISLAND_CHAT_NAME)}`, { method: "DELETE" })
         .catch(err => console.error("Error clearing chat history:", err));
+    } else {
+      localStorage.removeItem(FLOATING_ISLAND_CHAT_STORAGE_KEY);
     }
   }, [status]);
 
@@ -852,10 +971,12 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                         setShowVoiceDropdown(false);
                         setShowVoiceSetupModal(true);
                       }}
-                      disabled={voiceCloneStatus === "uploading" || voiceCloneStatus === "recording" || voiceCloneStatus === "generating" || userVoices.filter(v => !v.isSystem).length >= 3}
+                      disabled={status !== "authenticated" || voiceCloneStatus === "uploading" || voiceCloneStatus === "recording" || voiceCloneStatus === "generating" || userVoices.filter(v => !v.isSystem).length >= 3}
                       className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-black transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 ${voiceCloneStatus === "recording"
                         ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
-                        : userVoices.filter(v => !v.isSystem).length >= 3
+                        : status !== "authenticated"
+                          ? "bg-zinc-200 text-zinc-500"
+                          : userVoices.filter(v => !v.isSystem).length >= 3
                           ? "bg-zinc-200 text-zinc-500"
                           : "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
                         }`}
@@ -996,29 +1117,33 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                               )}
 
                               {/* --- Custom Voices Section --- */}
-                              <p className="mb-1 px-1.5 text-[9px] font-black uppercase tracking-widest text-zinc-400">Tus Voces Clonadas</p>
-                              {userVoices.filter(v => !v.isSystem).map(voice => (
-                                <div
-                                  key={voice.id}
-                                  onClick={() => selectVoice(voice.providerVoiceId)}
-                                  className={`cursor-pointer relative flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] font-bold transition-all ${activeVoiceId === voice.providerVoiceId ? "bg-blue-100 text-blue-700" : "text-zinc-600 hover:bg-zinc-200/50"
-                                    }`}
-                                >
-                                  <span className="truncate pr-2">
-                                    {new Date(voice.createdAt).toLocaleDateString()} - {voice.providerVoiceId?.slice(-4) || "Voz"}
-                                  </span>
+                              {status === "authenticated" && (
+                                <>
+                                  <p className="mb-1 px-1.5 text-[9px] font-black uppercase tracking-widest text-zinc-400">Tus Voces Clonadas</p>
+                                  {userVoices.filter(v => !v.isSystem).map(voice => (
+                                    <div
+                                      key={voice.id}
+                                      onClick={() => selectVoice(voice.providerVoiceId)}
+                                      className={`cursor-pointer relative flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] font-bold transition-all ${activeVoiceId === voice.providerVoiceId ? "bg-blue-100 text-blue-700" : "text-zinc-600 hover:bg-zinc-200/50"
+                                        }`}
+                                    >
+                                      <span className="truncate pr-2">
+                                        {new Date(voice.createdAt).toLocaleDateString()} - {voice.providerVoiceId?.slice(-4) || "Voz"}
+                                      </span>
 
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenVoiceMenuId(voice.id);
-                                    }}
-                                    className="p-1 rounded-md hover:bg-black/10 transition-colors"
-                                  >
-                                    <MoreVertical className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              ))}
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenVoiceMenuId(voice.id);
+                                        }}
+                                        className="p-1 rounded-md hover:bg-black/10 transition-colors"
+                                      >
+                                        <MoreVertical className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
                             </motion.div>
                           )}
                         </AnimatePresence>
@@ -1307,29 +1432,47 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
           </div>
 
           <div style={{ overflow: "hidden", maxHeight: showInput ? "300px" : "0px", opacity: showInput ? 1 : 0, transition: "max-height 0.28s cubic-bezier(0.4,0,0.2,1), opacity 0.2s ease" }}>
+            {showInput && getSafetyAlertText(currentComuna) && (
+              <div className={`mt-3 flex items-start gap-2 rounded-2xl border px-3 py-2 ${currentComuna?.risk === "high" ? "border-red-100 bg-red-50 text-red-700" : "border-amber-100 bg-amber-50 text-amber-700"}`}>
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2.6} />
+                <p className="text-[11px] font-bold leading-relaxed">
+                  {getSafetyAlertText(currentComuna)}
+                </p>
+              </div>
+            )}
             {messages.length > 0 && (
               <div className="mt-3 flex flex-col gap-1.5 max-h-[160px] overflow-y-auto px-0.5 no-scrollbar">
                 {messages.map(m => {
-                  const parts = m.content.split(/(\[\[.*?\]\])/g);
+                  const landmarkTags = m.role === "assistant" ? getMessageLandmarkTags(m.content) : [];
+                  const displayText = m.role === "assistant" ? getMessageTextWithoutTags(m.content) : m.content;
                   return (
                     <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                      <div className="max-w-[90%] px-3 py-1.5 rounded-2xl text-[11px] font-medium leading-relaxed" style={{ background: m.role === "user" ? "#3b82f6" : "rgba(0,0,0,0.05)", color: m.role === "user" ? "white" : "#374151", borderRadius: m.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px" }}>
-                        {parts.map((part, idx) => {
-                          if (part.startsWith('[[') && part.endsWith(']]')) {
-                            const name = part.slice(2, -2);
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => handleLandmarkClick(name)}
-                                className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded-md bg-blue-600 text-white font-black hover:bg-blue-700 transition-colors"
+                      <div className="flex max-w-[90%] flex-col gap-1.5">
+                        {displayText && (
+                          <div className="px-3 py-1.5 rounded-2xl text-[11px] font-medium leading-relaxed" style={{ background: m.role === "user" ? "#3b82f6" : "rgba(0,0,0,0.05)", color: m.role === "user" ? "white" : "#374151", borderRadius: m.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px" }}>
+                            {displayText}
+                          </div>
+                        )}
+                        {landmarkTags.length > 0 && (
+                          <div className="flex flex-col gap-1 pl-1">
+                            {landmarkTags.map((name, idx) => (
+                              <div
+                                key={`${name}-${idx}`}
+                                className="flex items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-2 py-1.5 text-blue-700 shadow-sm"
                               >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                                {name}
-                              </button>
-                            );
-                          }
-                          return part;
-                        })}
+                                <span className="min-w-0 truncate text-[11px] font-black">{name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleLandmarkClick(name)}
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-700"
+                                  title="Ver patrimonio"
+                                >
+                                  <Plus className="h-3.5 w-3.5" strokeWidth={3} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

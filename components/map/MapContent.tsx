@@ -74,6 +74,157 @@ function getDailyTourStartMessage(language: keyof typeof TOUR_START_MESSAGES) {
     return messages[daySeed % messages.length];
 }
 
+function getLandmarkChatStorageKey(landmarkName: string) {
+    return `caliguia_chat_landmark_${landmarkName}`;
+}
+
+function loadGuestLandmarkChat(landmarkName: string): { role: 'user' | 'ai', text: string }[] {
+    try {
+        const raw = localStorage.getItem(getLandmarkChatStorageKey(landmarkName));
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveGuestLandmarkChat(landmarkName: string, messages: { role: 'user' | 'ai', text: string }[]) {
+    localStorage.setItem(getLandmarkChatStorageKey(landmarkName), JSON.stringify(messages));
+}
+
+function normalizePlaceName(name: string) {
+    return name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\b(el|la|los|las|del|de|parque|plaza|monumento|museo)\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function hasUsefulNameOverlap(a: string, b: string) {
+    const left = normalizePlaceName(a);
+    const right = normalizePlaceName(b);
+    if (!left || !right) return false;
+    if (left === right || left.includes(right) || right.includes(left)) return true;
+
+    const leftTokens = new Set(left.split(" ").filter(token => token.length > 2));
+    const rightTokens = right.split(" ").filter(token => token.length > 2);
+    if (rightTokens.length === 0) return false;
+
+    const matches = rightTokens.filter(token => leftTokens.has(token)).length;
+    return matches >= Math.min(2, rightTokens.length);
+}
+
+const PLACE_DETAIL_FIELDS = [
+    "id",
+    "displayName",
+    "location",
+    "types",
+    "primaryType",
+    "editorialSummary",
+    "formattedAddress",
+    "rating",
+    "userRatingCount",
+    "photos",
+] as const;
+
+const LEGACY_PLACE_DETAIL_FIELDS = [
+    "place_id",
+    "name",
+    "formatted_address",
+    "geometry",
+    "types",
+    "rating",
+    "user_ratings_total",
+    "photos",
+    "editorial_summary",
+] as const;
+
+function getGooglePlaceName(place: any) {
+    if (typeof place.displayName === "string") return place.displayName;
+    return place.displayName?.text || place.name || "Lugar cercano";
+}
+
+function getGooglePlaceTypeLabel(types: string[] = [], primaryType?: string, language: "es" | "en" | "pt" = "es") {
+    const typeSet = new Set([primaryType, ...types].filter(Boolean));
+    const labels = {
+        museum: { es: "Museo", en: "Museum", pt: "Museu" },
+        church: { es: "Patrimonio Religioso", en: "Religious Heritage", pt: "Patrimônio Religioso" },
+        art_gallery: { es: "Arte y Cultura", en: "Art and Culture", pt: "Arte e Cultura" },
+        historical_landmark: { es: "Sitio Histórico", en: "Historic Site", pt: "Sítio Histórico" },
+        park: { es: "Parque", en: "Park", pt: "Parque" },
+        cultural_center: { es: "Centro Cultural", en: "Cultural Center", pt: "Centro Cultural" },
+        performing_arts_theater: { es: "Teatro", en: "Theater", pt: "Teatro" },
+        tourist_attraction: { es: "Atracción Local", en: "Local Attraction", pt: "Atração Local" },
+        fallback: { es: "Lugar Cercano", en: "Nearby Place", pt: "Lugar Próximo" },
+    };
+
+    if (typeSet.has("museum")) return labels.museum[language];
+    if (typeSet.has("church")) return labels.church[language];
+    if (typeSet.has("art_gallery")) return labels.art_gallery[language];
+    if (typeSet.has("historical_landmark")) return labels.historical_landmark[language];
+    if (typeSet.has("park")) return labels.park[language];
+    if (typeSet.has("cultural_center")) return labels.cultural_center[language];
+    if (typeSet.has("performing_arts_theater")) return labels.performing_arts_theater[language];
+    if (typeSet.has("tourist_attraction")) return labels.tourist_attraction[language];
+    return labels.fallback[language];
+}
+
+function getGooglePlacePhotos(place: any) {
+    return (place.photos || [])
+        .map((photo: any) => {
+            try {
+                return photo.getURI?.({ maxWidth: 900, maxHeight: 700 })
+                    || photo.getUrl?.({ maxWidth: 900, maxHeight: 700 });
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean)
+        .slice(0, 5) as string[];
+}
+
+function buildExternalLandmarkFromPlace(place: any, language: "es" | "en" | "pt") {
+    const location = place.location || place.geometry?.location;
+    if (!location) return null;
+
+    const name = getGooglePlaceName(place);
+    const types = place.types || [];
+    const typeLabel = getGooglePlaceTypeLabel(types, place.primaryType, language);
+    const reviewCount = place.userRatingCount || place.user_ratings_total;
+    const rating = place.rating ? `Calificación ${place.rating}${reviewCount ? ` basada en ${reviewCount} reseñas` : ""}.` : "";
+    const address = place.formattedAddress || place.formatted_address || place.vicinity || "";
+    const editorialSummary = typeof place.editorialSummary === "string"
+        ? place.editorialSummary
+        : place.editorialSummary?.text || place.editorial_summary?.overview || place.editorial_summary?.text || "";
+    const summaryParts = [editorialSummary, address, rating].filter(Boolean);
+    const summary = summaryParts.join(" ").trim() || `Lugar cercano en Santiago de Cali.`;
+
+    return {
+        name,
+        lat: typeof location.lat === "function" ? location.lat() : location.lat,
+        lng: typeof location.lng === "function" ? location.lng() : location.lng,
+        type: "place",
+        icon: "",
+        description: typeLabel,
+        history: summary.length > 500 ? `${summary.slice(0, 497)}...` : summary,
+        radiusM: 200,
+        place_id: place.id || place.place_id,
+        images: getGooglePlacePhotos(place),
+        prompt: `Háblale al usuario sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Usa contexto local y sé breve.`,
+    };
+}
+
+function needsAiPlaceDescription(history?: string) {
+    if (!history) return true;
+    const clean = history.trim();
+    if (clean.length < 120) return true;
+    if (/^CR\s|^Cl\.|^Calle\s|^Carrera\s/i.test(clean)) return true;
+    return !/[a-záéíóúñ]{4,}.*[.].*[a-záéíóúñ]{4,}/i.test(clean);
+}
+
 function MapContent() {
     const t = useTranslations("Map");
     const { status: authStatus } = useSession();
@@ -118,6 +269,7 @@ function MapContent() {
         currentNarration,
         speak,
         currentComuna,
+        comunas,
         activeRouteLandmark,
         setActiveRouteLandmark,
         routeInterestPoints,
@@ -132,11 +284,137 @@ function MapContent() {
     const [userQuestion, setUserQuestion] = useState("");
     const [isAsking, setIsAsking] = useState(false);
     const [routePins, setRoutePins] = useState<any[]>([]);
+    const [externalLandmark, setExternalLandmark] = useState<any | null>(null);
     const routeMarkersRef = useRef<any[]>([]);
+
+    const findLandmarkByName = (name: string) => {
+        const localMatch = localLandmarks.find(l => hasUsefulNameOverlap(l.name, name));
+        if (localMatch) return localMatch;
+
+        const placeMatch = places.find(place => place.name && hasUsefulNameOverlap(place.name, name));
+        if (!placeMatch?.geometry?.location) return null;
+
+        const placeTypes = Array.isArray(placeMatch.types) ? placeMatch.types.join(", ") : "Lugar cercano";
+        const rating = placeMatch.rating ? `Calificación ${placeMatch.rating}${placeMatch.user_ratings_total ? ` basada en ${placeMatch.user_ratings_total} reseñas` : ""}.` : "";
+
+        return {
+            name: placeMatch.name,
+            lat: placeMatch.geometry.location.lat(),
+            lng: placeMatch.geometry.location.lng(),
+            type: "place",
+            icon: "",
+            description: placeTypes || "Lugar cercano",
+            history: `${placeMatch.vicinity || "Lugar cercano en Cali."} ${rating}`.trim(),
+            radiusM: 200,
+            place_id: placeMatch.place_id,
+            images: [],
+            prompt: `Háblale al usuario sobre ${placeMatch.name}, un lugar cercano en Santiago de Cali. Sé breve, amable y útil.`,
+        };
+    };
+
+    const resolveLandmarkWithPlaces = async (name: string) => {
+        const localMatch = localLandmarks.find(l => hasUsefulNameOverlap(l.name, name));
+        if (localMatch) return localMatch;
+
+        const placeMatch = places.find(place => place.name && hasUsefulNameOverlap(place.name, name));
+
+        try {
+            if (!google.maps.importLibrary) return findLandmarkByName(name);
+            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+
+            let place: any = null;
+            if (placeMatch?.place_id) {
+                place = new Place({ id: placeMatch.place_id });
+                await place.fetchFields({ fields: [...PLACE_DETAIL_FIELDS] as any });
+            } else if ((Place as any).searchByText) {
+                const result = await (Place as any).searchByText({
+                    textQuery: `${name} Cali Colombia`,
+                    fields: [...PLACE_DETAIL_FIELDS],
+                    maxResultCount: 1,
+                    language,
+                    region: "CO",
+                    locationBias: coords ? {
+                        center: { lat: coords.lat, lng: coords.lng },
+                        radius: 5000,
+                    } : undefined,
+                });
+                place = result?.places?.[0] || null;
+            }
+
+            let landmark = place ? buildExternalLandmarkFromPlace(place, language) : null;
+
+            if ((!landmark?.images?.length || !landmark?.history || needsAiPlaceDescription(landmark.history)) && mapInstance.current) {
+                const detailPlaceId = place?.id || place?.place_id || placeMatch?.place_id;
+                const textQuery = !detailPlaceId ? `${name} Cali Colombia` : "";
+                const legacyPlace = await new Promise<any | null>((resolve) => {
+                    const service = new google.maps.places.PlacesService(mapInstance.current!);
+                    const done = (result: any, placeStatus: string) => {
+                        resolve(placeStatus === "OK" ? result : null);
+                    };
+
+                    if (detailPlaceId) {
+                        service.getDetails(
+                            { placeId: detailPlaceId, fields: [...LEGACY_PLACE_DETAIL_FIELDS] as any, language },
+                            done
+                        );
+                        return;
+                    }
+
+                    service.findPlaceFromQuery(
+                        { query: textQuery, fields: ["place_id", "name", "geometry", "formatted_address"] as any },
+                        (results, placeStatus) => {
+                            const first = placeStatus === "OK" ? results?.[0] : null;
+                            if (!first?.place_id) {
+                                resolve(first || null);
+                                return;
+                            }
+                            service.getDetails(
+                                { placeId: first.place_id, fields: [...LEGACY_PLACE_DETAIL_FIELDS] as any, language },
+                                done
+                            );
+                        }
+                    );
+                });
+
+                if (legacyPlace) {
+                    const legacyLandmark = buildExternalLandmarkFromPlace(legacyPlace, language);
+                    if (legacyLandmark) {
+                        landmark = {
+                            ...legacyLandmark,
+                            ...landmark,
+                            history: landmark?.history && landmark.history !== "Lugar cercano en Santiago de Cali." ? landmark.history : legacyLandmark.history,
+                            images: landmark?.images?.length ? landmark.images : legacyLandmark.images,
+                            description: landmark?.description && landmark.description !== "Lugar Cercano" ? landmark.description : legacyLandmark.description,
+                        };
+                    }
+                }
+            }
+
+            if (landmark && needsAiPlaceDescription(landmark.history)) {
+                const generatedDescription = await fetchNarration(
+                    `Crea una descripción turística amable y útil para el lugar "${landmark.name}" en Cali, Colombia. Categoría: ${landmark.description}. Dirección o datos de Places: ${landmark.history}. ${currentComuna ? `Zona actual del usuario: ${currentComuna.name}, riesgo ${currentComuna.risk}.` : ""} No inventes horarios ni precios. Máximo 75 palabras.`,
+                    "chat",
+                    language
+                ).catch(() => "");
+
+                if (generatedDescription) {
+                    landmark = {
+                        ...landmark,
+                        history: generatedDescription.replace(/\[\[.*?\]\]/g, "").trim(),
+                    };
+                }
+            }
+
+            return landmark || findLandmarkByName(name);
+        } catch (error) {
+            console.error("Error resolving place details:", error);
+            return findLandmarkByName(name);
+        }
+    };
 
     const clearChat = (landmarkName: string) => {
         setConversation([]);
-        sessionStorage.removeItem(`chat_${landmarkName}`);
+        localStorage.removeItem(getLandmarkChatStorageKey(landmarkName));
         if (authStatus === "authenticated") {
             fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(landmarkName)}`, { method: "DELETE" })
                 .catch(err => console.error("Error clearing chat:", err));
@@ -150,13 +428,27 @@ function MapContent() {
         const newMsg: { role: 'user' | 'ai', text: string } = { role: 'user', text: question };
         const updatedChat = [...conversation, newMsg];
         setConversation(updatedChat);
+        if (authStatus !== "authenticated") {
+            saveGuestLandmarkChat(landmarkName, updatedChat);
+        }
         setUserQuestion("");
         setIsAsking(true);
 
         // ── Construir contexto dinámico ──
         let safetyContext = "";
         if (currentComuna) {
-            safetyContext = `Contexto de seguridad: Estamos en ${currentComuna.name}. Nivel de riesgo: ${currentComuna.risk}. ${currentComuna.description}`;
+            const highRiskComunas = comunas
+                .filter(comuna => comuna.risk === "high")
+                .slice(0, 8)
+                .map(comuna => `${comuna.name}: ${comuna.description}`)
+                .join(" | ");
+            safetyContext = `
+                Contexto de seguridad y ubicación:
+                Coordenadas actuales: ${coords ? `lat ${coords.lat.toFixed(5)}, lng ${coords.lng.toFixed(5)}, precisión ${Math.round(coords.accuracy)}m` : "sin coordenadas precisas"}.
+                Comuna actual: ${currentComuna.name}. Nivel de riesgo: ${currentComuna.risk}. ${currentComuna.description}
+                Heatmap de seguridad: las comunas de riesgo alto pesan más en el mapa de calor. Comunas de alta precaución: ${highRiskComunas || "sin datos de alta precaución cargados"}.
+                Si el riesgo actual es high o medium, incluye una alerta breve, amable y no alarmista antes de recomendar rutas o lugares.
+            `;
         }
 
         const nearbyContext = places.length > 0
@@ -192,7 +484,9 @@ function MapContent() {
                 const aiMsg: { role: 'user' | 'ai', text: string } = { role: 'ai', text: response };
                 const finalChat = [...updatedChat, aiMsg];
                 setConversation(finalChat);
-                sessionStorage.setItem(`chat_${landmarkName}`, JSON.stringify(finalChat));
+                if (authStatus !== "authenticated") {
+                    saveGuestLandmarkChat(landmarkName, finalChat);
+                }
 
                 // Persist to DB if authenticated
                 if (authStatus === "authenticated") {
@@ -215,7 +509,7 @@ function MapContent() {
     };
 
     const handleToggleRoute = async (landmarkName: string) => {
-        const landmark = localLandmarks.find(l => l.name === landmarkName);
+        const landmark = findLandmarkByName(landmarkName);
         if (!landmark || !coords || !mapInstance.current || !google.maps.importLibrary) return;
 
         // If this route is already active, remove it
@@ -384,19 +678,37 @@ function MapContent() {
     useEffect(() => {
         const handleExternalRoute = (e: any) => {
             if (e.detail?.name) {
-                handleToggleRoute(e.detail.name);
+                resolveLandmarkWithPlaces(String(e.detail.name)).then(landmark => {
+                    if (!landmark) return;
+                    const isLocalLandmark = localLandmarks.some(l => l.name === landmark.name);
+                    setExternalLandmark(isLocalLandmark ? null : landmark);
+                    setCurrentImageIdx(0);
+                    setExpandedLandmark(landmark.name);
+                });
             }
         };
         window.addEventListener("caliguia:show-landmark-route", handleExternalRoute);
         return () => window.removeEventListener("caliguia:show-landmark-route", handleExternalRoute);
-    }, [handleToggleRoute]);
+    }, [localLandmarks, places, setCurrentImageIdx, setExpandedLandmark]);
 
     useEffect(() => {
         if (expandedLandmark) {
             const loadAndGreet = async () => {
                 let initialMessages: any[] = [];
+                const guestMessages = loadGuestLandmarkChat(expandedLandmark);
                 
-                if (authStatus === "authenticated") {
+                if (authStatus === "authenticated" && guestMessages.length > 0) {
+                    initialMessages = guestMessages;
+                    fetch("/api/users/me/chat-history", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ landmarkName: expandedLandmark, messages: guestMessages }),
+                    })
+                        .then(res => {
+                            if (res.ok) localStorage.removeItem(getLandmarkChatStorageKey(expandedLandmark));
+                        })
+                        .catch(err => console.error("Error migrating landmark chat:", err));
+                } else if (authStatus === "authenticated") {
                     try {
                         const res = await fetch(`/api/users/me/chat-history?landmarkName=${encodeURIComponent(expandedLandmark)}`);
                         if (res.ok) {
@@ -409,15 +721,16 @@ function MapContent() {
                 }
 
                 if (initialMessages.length === 0) {
-                    const saved = sessionStorage.getItem(`chat_${expandedLandmark}`);
-                    if (saved) initialMessages = JSON.parse(saved);
+                    initialMessages = guestMessages;
                 }
 
                 setConversation(initialMessages);
 
                 // Greeting logic: if NO previous messages, say hi with landmark info
                 if (initialMessages.length === 0 && speak) {
-                    const landmark = localLandmarks.find(l => l.name === expandedLandmark);
+                    const landmark = externalLandmark?.name === expandedLandmark
+                        ? externalLandmark
+                        : localLandmarks.find(l => l.name === expandedLandmark);
                     if (landmark) {
                         speak({ 
                             type: "info", 
@@ -431,7 +744,29 @@ function MapContent() {
             
             loadAndGreet();
         }
-    }, [expandedLandmark, authStatus, speak, t, language, localLandmarks]);
+    }, [expandedLandmark, authStatus, speak, t, language, localLandmarks, externalLandmark]);
+
+    useEffect(() => {
+        if (authStatus !== "authenticated") return;
+
+        Object.keys(localStorage)
+            .filter(key => key.startsWith("caliguia_chat_landmark_"))
+            .forEach(key => {
+                const landmarkName = key.replace("caliguia_chat_landmark_", "");
+                const messages = loadGuestLandmarkChat(landmarkName);
+                if (messages.length === 0) return;
+
+                fetch("/api/users/me/chat-history", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ landmarkName, messages }),
+                })
+                    .then(res => {
+                        if (res.ok) localStorage.removeItem(key);
+                    })
+                    .catch(err => console.error("Error migrating landmark chat:", err));
+            });
+    }, [authStatus]);
 
 
     const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
@@ -719,7 +1054,10 @@ function MapContent() {
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="absolute inset-0 z-110 flex items-center justify-center bg-black/60 backdrop-blur-md px-6"
-                        onClick={() => setExpandedLandmark(null)}
+                        onClick={() => {
+                            setExpandedLandmark(null);
+                            setExternalLandmark(null);
+                        }}
                     >
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -729,7 +1067,9 @@ function MapContent() {
                             onClick={(e) => e.stopPropagation()}
                         >
                             {(() => {
-                                const landmark = localLandmarks.find(l => l.name === expandedLandmark);
+                                const landmark = externalLandmark?.name === expandedLandmark
+                                    ? externalLandmark
+                                    : localLandmarks.find(l => l.name === expandedLandmark);
                                 if (!landmark) return null;
 
                                 return (
@@ -737,7 +1077,10 @@ function MapContent() {
                                         {/* Header with close button */}
                                         <div className="absolute top-4 right-4 z-20">
                                             <button
-                                                onClick={() => setExpandedLandmark(null)}
+                                                onClick={() => {
+                                                    setExpandedLandmark(null);
+                                                    setExternalLandmark(null);
+                                                }}
                                                 className="w-10 h-10 rounded-full bg-black/20 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/40 transition-colors"
                                             >
                                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -780,7 +1123,7 @@ function MapContent() {
                                                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m9 18 6-6-6-6" /></svg>
                                                             </button>
                                                             <div className="absolute bottom-4 right-6 flex gap-1">
-                                                                {landmark.images.map((_, i) => (
+                                                                {landmark.images.map((_: string, i: number) => (
                                                                     <div key={i} className={`w-1.5 h-1.5 rounded-full transition-all ${i === currentImageIdx ? "bg-white w-4" : "bg-white/40"}`} />
                                                                 ))}
                                                             </div>
@@ -830,7 +1173,7 @@ function MapContent() {
                                                                             <div className="flex flex-wrap gap-2 mt-1">
                                                                                 {placeParts.map((part, idx) => {
                                                                                     const name = part.slice(2, -2);
-                                                                                    const target = localLandmarks.find(l => l.name.toLowerCase() === name.toLowerCase());
+                                                                                    const target = findLandmarkByName(name);
                                                                                     if (target) {
                                                                                         return (
                                                                                             <button

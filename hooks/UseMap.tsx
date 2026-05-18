@@ -462,7 +462,15 @@ export function UseHome() {
                     region: "CO",
                 };
 
-                const { places } = await Place.searchNearby(request);
+                let places: any[] = [];
+                try {
+                    const result = await Place.searchNearby(request);
+                    places = result.places || [];
+                } catch (error) {
+                    console.warn(`[places] Nearby search failed for radius ${radius}. Retrying with next radius.`);
+                    continue;
+                }
+
                 const mapped = (places || [])
                     .filter((p: any) => p.location && getPlaceName(p))
                     .filter((p: any) => isInsideCaliBounds(p.location.lat(), p.location.lng()))
@@ -495,8 +503,8 @@ export function UseHome() {
             });
 
             setPlaces(sorted);
-        } catch (e) {
-            console.error("Place API search error:", e);
+        } catch {
+            console.warn("[places] Nearby search failed.");
             setPlaces([]);
         } finally {
             setLoadingPlaces(false);
@@ -537,7 +545,14 @@ export function UseHome() {
 
                 if (plan.includedTypes) request.includedTypes = [...plan.includedTypes];
 
-                const result = await Place.searchNearby(request);
+                let result: any;
+                try {
+                    result = await Place.searchNearby(request);
+                } catch {
+                    console.warn(`[places] Landmark search failed for radius ${plan.radius}. Trying next plan.`);
+                    continue;
+                }
+
                 foundPlaces = (result.places || [])
                     .filter((place: any) => place.location && getPlaceName(place))
                     .filter((place: any) => isInsideCaliBounds(place.location.lat(), place.location.lng()));
@@ -581,8 +596,8 @@ export function UseHome() {
                 });
 
             setLocalLandmarks(newLandmarks);
-        } catch (e) {
-            console.error("Place API landmarks error:", e);
+        } catch {
+            console.warn("[places] Landmark search failed.");
             setLocalLandmarks([]);
         } finally {
             setLoadingLandmarks(false);

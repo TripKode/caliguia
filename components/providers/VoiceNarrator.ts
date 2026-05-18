@@ -21,6 +21,8 @@ interface UseVoiceNarratorOptions {
   language?: LanguageCode;
 }
 
+const ACTIVE_PROVIDER_VOICE_STORAGE_KEY = "caliguia_active_provider_voice_id";
+
 // ── Real voice from the browser ────────────────────────────────────────────
 export interface CaliVoice {
   id: string;        // voiceURI (unique identifier)
@@ -248,6 +250,10 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     const formData = new FormData();
     formData.append("text", event.text);
     formData.append("language", languageRef.current);
+    const activeProviderVoiceId = localStorage.getItem(ACTIVE_PROVIDER_VOICE_STORAGE_KEY);
+    if (status !== "authenticated" && activeProviderVoiceId?.startsWith("system:")) {
+      formData.append("activeProviderVoiceId", activeProviderVoiceId);
+    }
 
     fetch("/api/voice/speech", {
       method: "POST",
@@ -290,7 +296,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         notifyVoicePlaybackError(event, error);
         finishAndContinue();
       });
-  }, [muted, gradioVoiceReady, ensureAudioElement, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
+  }, [muted, status, gradioVoiceReady, ensureAudioElement, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
