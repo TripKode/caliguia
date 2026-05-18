@@ -2,9 +2,9 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Cali Guia PWA',
-    short_name: 'Cali Guia',
-    description: 'A Progressive Web App for Cali Guia',
+    name: 'CaliGuia Turistas',
+    short_name: 'CaliGuia',
+    description: 'A progressive web app to guide tourists around the city of Cali',
     start_url: '/',
     display: 'standalone',
     background_color: '#ffffff',
