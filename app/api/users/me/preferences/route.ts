@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { normalizeTravelProfile } from "@/lib/travel-profile";
 import { NextRequest, NextResponse } from "next/server";
 
 const LANGUAGES = ["es", "en", "pt"] as const;
@@ -61,8 +62,11 @@ export async function PATCH(req: NextRequest) {
     data.activeProviderVoiceId = activeProviderVoiceId;
   }
 
-  if (travelPreferences !== undefined && typeof travelPreferences === "object" && travelPreferences !== null) {
-    data.travelPreferences = travelPreferences;
+  if (travelPreferences !== undefined) {
+    if (typeof travelPreferences !== "object" || travelPreferences === null || Array.isArray(travelPreferences)) {
+      return NextResponse.json({ error: "Invalid travelPreferences" }, { status: 400 });
+    }
+    data.travelPreferences = normalizeTravelProfile(travelPreferences);
   }
 
   if (Object.keys(data).length === 0) {

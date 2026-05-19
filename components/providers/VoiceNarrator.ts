@@ -131,7 +131,6 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const [gradioVoiceReady, setGradioVoiceReady] = useState(true);
   const gradioVoiceReadyRef = useRef(true);
 
-  // Keep refs current
   useEffect(() => { languageRef.current = language; }, [language]);
   useEffect(() => { availableVoicesRef.current = availableVoices; }, [availableVoices]);
   useEffect(() => { selectedVoiceIdRef.current = selectedVoiceId; }, [selectedVoiceId]);

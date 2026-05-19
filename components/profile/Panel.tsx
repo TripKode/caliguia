@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
     Landmark as LandmarkIcon,
@@ -26,7 +27,9 @@ import {
     Route,
     Flag,
     Circle,
-    RefreshCw
+    RefreshCw,
+    X,
+    ExternalLink
 } from "lucide-react";
 import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
@@ -38,14 +41,38 @@ import { useMap } from "@/hooks/UseMap";
 import { useExperience } from "@/components/providers/ExperienceProvider";
 import { useTranslations } from "next-intl";
 import { haversineDistance, getComunaCentroid } from "@/components/map/handlers";
-import { type RiskLevel } from "@/components/map/types";
+import { type CaliEvent, type RiskLevel } from "@/components/map/types";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
 import { BusinessModal } from "./BusinessModal";
 import { HotelModal } from "./HotelModal";
+import { matchesTourismInterest, normalizeTravelProfile } from "@/lib/travel-profile";
+
+function getBogotaDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        timeZone: "America/Bogota",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getEventStatus(event: CaliEvent, todayKey = getBogotaDateKey()) {
+    if (todayKey < event.startDate) return "upcoming";
+    if (todayKey > event.endDate) return "past";
+    return "active";
+}
 
 export function Panel() {
     const t = useTranslations("Panel");
     const { language } = useExperience();
+    const agendaDate = new Intl.DateTimeFormat(language === "en" ? "en-US" : language === "pt" ? "pt-BR" : "es-CO", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "America/Bogota",
+    }).format(new Date());
     const [currentPage, setCurrentPage] = useState(1);
     const [localPage, setLocalPage] = useState(1);
     const [isPlacesExpanded, setIsPlacesExpanded] = useState(false);
@@ -56,6 +83,7 @@ export function Panel() {
     const [isItineraryExpanded, setIsItineraryExpanded] = useState(true);
     const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
     const [selectedHotel, setSelectedHotel] = useState<any | null>(null);
+    const [selectedEvent, setSelectedEvent] = useState<CaliEvent | null>(null);
     const {
         activeTab,
         setActiveTab,
@@ -208,7 +236,7 @@ export function Panel() {
 
         // 1. Obtener perfil
         const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
-        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+        const userProfile = normalizeTravelProfile(userProfileRaw ? JSON.parse(userProfileRaw) : {});
 
         const waypoints: google.maps.DirectionsWaypoint[] = [];
         const interestPoints: any[] = [];
@@ -222,14 +250,9 @@ export function Panel() {
         let relevantLandmarks = localLandmarks.filter(l => {
             const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
             if (!inBox || l.name.toLowerCase() === landmark.name.toLowerCase()) return false;
-            const interests = userProfile.interests;
             const n = l.name.toLowerCase();
             const d = (l.description || "").toLowerCase();
-            return (
-                (interests.includes('cultura') && (d.includes('heritage') || d.includes('architecture') || d.includes('patrimonio'))) ||
-                (interests.includes('naturaleza') && (d.includes('park') || d.includes('parque') || d.includes('river'))) ||
-                (interests.includes('salsa') && (n.includes('salsa') || n.includes('dance')))
-            );
+            return matchesTourismInterest(`${n} ${d} ${l.history || ""} ${l.type || ""}`, userProfile.interests);
         });
 
         if (shuffle) {
@@ -799,7 +822,7 @@ export function Panel() {
                             <div className="text-right">
                                 <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("date")}</p>
                                 <p className="text-[12px] font-semibold text-zinc-800 mt-0.5">
-                                    Abril 30, 2026
+                                    {agendaDate}
                                 </p>
                             </div>
                         </div>
@@ -808,46 +831,57 @@ export function Panel() {
                         <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
                             <div className="mb-6">
                                 <div className="flex flex-col gap-2">
-                                    {CALI_EVENTS_TODAY.map((event, idx) => (
-                                        <motion.div
-                                            key={event.id}
-                                            initial={{ opacity: 0, x: -10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            transition={{ delay: idx * 0.05 }}
-                                            className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
-                                        >
-                                            <div className="flex items-start gap-3">
-                                                <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                                                    {event.category.includes("Salsa") || event.category.includes("Música") ? (
-                                                        <Music className="w-5 h-5 text-blue-500" />
-                                                    ) : event.category.includes("Gastronomía") ? (
-                                                        <Utensils className="w-5 h-5 text-blue-500" />
-                                                    ) : event.category.includes("Cine") ? (
-                                                        <Video className="w-5 h-5 text-blue-500" />
-                                                    ) : (
-                                                        <Calendar className="w-5 h-5 text-blue-500" />
-                                                    )}
+                                    {CALI_EVENTS_TODAY.map((event, idx) => {
+                                        const eventStatus = getEventStatus(event);
+                                        return (
+                                            <motion.div
+                                                key={event.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: idx * 0.05 }}
+                                                onClick={() => setSelectedEvent(event)}
+                                                className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
+                                            >
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                                                        {event.category.includes("Salsa") || event.category.includes("Música") ? (
+                                                            <Music className="w-5 h-5 text-blue-500" />
+                                                        ) : event.category.includes("Gastronomía") || event.category.includes("Gastro") ? (
+                                                            <Utensils className="w-5 h-5 text-blue-500" />
+                                                        ) : event.category.includes("Cine") ? (
+                                                            <Video className="w-5 h-5 text-blue-500" />
+                                                        ) : (
+                                                            <Calendar className="w-5 h-5 text-blue-500" />
+                                                        )}
+                                                    </div>
+                                                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                                        <div className="flex min-w-0 items-center justify-between gap-2">
+                                                            <span className="max-w-[118px] truncate whitespace-nowrap text-[8px] font-black text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full uppercase tracking-tighter sm:max-w-[150px]">
+                                                                {event.category}
+                                                            </span>
+                                                            <div className="flex shrink-0 items-center gap-1.5">
+                                                                {eventStatus === "past" && (
+                                                                    <span className="text-[8px] font-black uppercase tracking-tighter text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-full">
+                                                                        Ya pasó
+                                                                    </span>
+                                                                )}
+                                                                <span className="text-[10px] font-bold text-zinc-400">{event.time}</span>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-[14px] font-black text-zinc-800 leading-tight">{event.title}</p>
+                                                        <div className="flex items-center gap-1 mt-0.5">
+                                                            <span className="text-[10px] font-bold text-zinc-400">Por:</span>
+                                                            <span className="text-[10px] font-bold text-zinc-600 truncate">{event.organizer}</span>
+                                                        </div>
+                                                        <div className="flex items-start gap-1 mt-1 text-zinc-500">
+                                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="shrink-0 mt-0.5"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                                                            <span className="text-[10px] font-medium leading-tight">{event.location}</span>
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="flex flex-col gap-1 min-w-0 flex-1">
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase tracking-tighter">
-                                                            {event.category}
-                                                        </span>
-                                                        <span className="text-[10px] font-bold text-zinc-400">{event.time}</span>
-                                                    </div>
-                                                    <p className="text-[14px] font-black text-zinc-800 leading-tight">{event.title}</p>
-                                                    <div className="flex items-center gap-1 mt-0.5">
-                                                        <span className="text-[10px] font-bold text-zinc-400">Por:</span>
-                                                        <span className="text-[10px] font-bold text-zinc-600 truncate">{event.organizer}</span>
-                                                    </div>
-                                                    <div className="flex items-start gap-1 mt-1 text-zinc-500">
-                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="shrink-0 mt-0.5"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
-                                                        <span className="text-[10px] font-medium leading-tight">{event.location}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </motion.div>
-                                    ))}
+                                            </motion.div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </div>
@@ -911,6 +945,7 @@ export function Panel() {
             </AnimatePresence>
             <BusinessModal placeId={selectedBusinessId} onClose={() => setSelectedBusinessId(null)} />
             <HotelModal hotel={selectedHotel} onClose={() => setSelectedHotel(null)} />
+            <EventModal event={selectedEvent} language={language} onClose={() => setSelectedEvent(null)} />
             <style>{`
             @keyframes pulse-bar {
               from { transform: scaleY(0.5); opacity: 0.6; }
@@ -918,5 +953,120 @@ export function Panel() {
             }
           `}</style>
         </div>
+    );
+}
+
+function EventModal({ event, language, onClose }: { event: CaliEvent | null; language: "es" | "en" | "pt"; onClose: () => void }) {
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!event || !mounted) return null;
+
+    const locale = language === "en" ? "en-US" : language === "pt" ? "pt-BR" : "es-CO";
+    const status = getEventStatus(event);
+    const isActive = status === "active";
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.location} ${event.title} Cali Colombia`)}`;
+    const startDate = new Date(`${event.startDate}T12:00:00-05:00`);
+    const endDate = new Date(`${event.endDate}T12:00:00-05:00`);
+    const start = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "America/Bogota" }).format(startDate);
+    const end = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "America/Bogota" }).format(endDate);
+    const yearLabel = new Intl.DateTimeFormat(locale, { year: "numeric", timeZone: "America/Bogota" }).format(endDate);
+    const dateLabel = event.startDate === event.endDate ? end : `${start} - ${end}`;
+
+    const handleVisit = () => {
+        if (!isActive) return;
+        window.open(mapsUrl, "_blank", "noopener,noreferrer");
+    };
+
+    return createPortal(
+        <AnimatePresence>
+            <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center px-4 py-8"
+                onClick={onClose}
+            >
+                <motion.div
+                    initial={{ opacity: 0, y: 30, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 18, scale: 0.96 }}
+                    transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                    className="relative w-full max-w-md rounded-[28px] bg-[#f9fafb] p-6 shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button
+                        onClick={onClose}
+                        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full bg-white text-zinc-500 shadow-sm transition-colors hover:text-zinc-800"
+                        aria-label="Cerrar"
+                    >
+                        <X size={18} strokeWidth={2.5} />
+                    </button>
+
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-600">
+                        <Calendar className="h-7 w-7" />
+                    </div>
+
+                    <div className="mb-3 flex min-w-0 items-center gap-2 pr-8">
+                        <span className="max-w-full truncate whitespace-nowrap rounded-full bg-blue-50 px-2 py-1 text-[9px] font-black uppercase tracking-tighter text-blue-600">
+                            {event.category}
+                        </span>
+                        {status === "past" && (
+                            <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-1 text-[9px] font-black uppercase tracking-tighter text-zinc-500">
+                                Ya pasó
+                            </span>
+                        )}
+                    </div>
+
+                    <h2 className="mb-3 text-[22px] font-black leading-tight text-zinc-900">{event.title}</h2>
+                    <p className="mb-5 text-[13px] font-medium leading-relaxed text-zinc-500">{event.description}</p>
+
+                    <div className="mb-5 grid grid-cols-3 gap-2 px-1 py-2">
+                        <div className="min-w-0 border-r border-zinc-200/70 pr-2">
+                            <div className="mb-1 flex items-center justify-between gap-1.5 text-zinc-400">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                    <Calendar className="h-3.5 w-3.5 shrink-0" />
+                                    <p className="text-[8px] font-black uppercase tracking-widest">Fecha</p>
+                                </div>
+                                <p className="shrink-0 text-[8px] font-black uppercase tracking-widest">{yearLabel}</p>
+                            </div>
+                            <p className="text-[11px] font-bold leading-tight text-zinc-800">{dateLabel}</p>
+                        </div>
+                        <div className="min-w-0 border-r border-zinc-200/70 px-2">
+                            <div className="mb-1 flex items-center gap-1.5 text-zinc-400">
+                                <Clock className="h-3.5 w-3.5 shrink-0" />
+                                <p className="text-[8px] font-black uppercase tracking-widest">Agenda</p>
+                            </div>
+                            <p className="text-[11px] font-bold leading-tight text-zinc-800">{event.time}</p>
+                        </div>
+                        <div className="min-w-0 pl-2">
+                            <div className="mb-1 flex items-center gap-1.5 text-zinc-400">
+                                <MapPin className="h-3.5 w-3.5 shrink-0" />
+                                <p className="text-[8px] font-black uppercase tracking-widest">Lugar</p>
+                            </div>
+                            <p className="text-[11px] font-bold leading-tight text-zinc-800">{event.location}</p>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleVisit}
+                        disabled={!isActive}
+                        className={`flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[13px] font-black transition-all ${isActive
+                            ? "bg-zinc-950 text-white shadow-md active:scale-95 hover:bg-black"
+                            : "cursor-not-allowed bg-zinc-200 text-zinc-500"
+                            }`}
+                    >
+                        <MapPin size={16} />
+                        {isActive ? "Ir al lugar" : status === "past" ? "Ya pasó" : "Disponible el día del evento"}
+                        {isActive && <ExternalLink size={14} />}
+                    </button>
+                </motion.div>
+            </motion.div>
+        </AnimatePresence>,
+        document.body
     );
 }

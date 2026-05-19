@@ -13,6 +13,7 @@ import { type LayerMode } from "@/components/map/types";
 import { useARVision } from "@/hooks/useARVision";
 import { useExperience } from "@/components/providers/ExperienceProvider";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
+import { normalizeTravelProfile } from "@/lib/travel-profile";
 
 const TOUR_START_MESSAGES = {
     es: [
@@ -457,9 +458,9 @@ function MapContent() {
             : "";
 
         const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
-        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : null;
+        const userProfile = userProfileRaw ? normalizeTravelProfile(JSON.parse(userProfileRaw)) : null;
         const profileContext = userProfile
-            ? `Perfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}.`
+            ? `Perfil del usuario: Segmentos turísticos: ${userProfile.tourismSegments.join(", ")}. Intereses: ${userProfile.interests.join(", ")}. Estilo: ${userProfile.style}. Vibe: ${userProfile.vibe}. Grupo: ${userProfile.travelGroup}. Ritmo: ${userProfile.pace}. Must-go sugeridos: ${userProfile.mustGo.join(", ")}.`
             : "";
 
         const prompt = `
@@ -603,7 +604,7 @@ function MapContent() {
         window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
 
         const userProfileRaw = sessionStorage.getItem("caliguia_user_profile");
-        const userProfile = userProfileRaw ? JSON.parse(userProfileRaw) : { interests: [], style: 'caminante' };
+        const userProfile = normalizeTravelProfile(userProfileRaw ? JSON.parse(userProfileRaw) : {});
 
         setActiveRouteLandmark(null);
         setRouteInterestPoints([]);

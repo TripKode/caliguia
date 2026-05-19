@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useSession } from "next-auth/react";
 import { useLocale } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
+import { type Pace, type TourismInterestId as InterestId, type TravelGroup } from "@/lib/travel-profile";
 
 export const LANGUAGES = {
   es: { label: "Español", instruction: "Respondes en español." },
@@ -15,47 +16,6 @@ export type LanguageCode = keyof typeof LANGUAGES;
 export const LANGUAGE_STORAGE_KEY = "caliguia_preferred_language";
 export const LANGUAGE_CONFIGURED_STORAGE_KEY = "caliguia_language_configured";
 export type ExperienceMode = "map" | "ar";
-export type InterestId = "salsa" | "naturaleza" | "patrimonio" | "gastronomia" | "deportivo" | "bienestar" | "compras";
-export type TravelGroup = "solo" | "pareja" | "familia" | "grupo";
-export type Pace = "rapido" | "tranquilo";
-
-export const TOURISM_INTERESTS: Record<InterestId, { label: string; profile: string; mustGo: string[] }> = {
-  salsa: {
-    label: "Salsa",
-    profile: "Baile, museos y vida nocturna.",
-    mustGo: ["Museo de la Salsa", "La Topa Tolondra", "Barrio Obrero"],
-  },
-  naturaleza: {
-    label: "Naturaleza",
-    profile: "Aves, río y senderismo.",
-    mustGo: ["Río Pance", "Km 18", "Zoológico de Cali"],
-  },
-  patrimonio: {
-    label: "Patrimonio",
-    profile: "Historia, miradores y centro.",
-    mustGo: ["La Ermita", "Cristo Rey", "San Antonio"],
-  },
-  gastronomia: {
-    label: "Gastronomía",
-    profile: "Sabores locales y Pacífico.",
-    mustGo: ["Galería Alameda", "Parque del Perro", "Granada"],
-  },
-  deportivo: {
-    label: "Deportivo",
-    profile: "Eventos, rutas y entrenamiento.",
-    mustGo: ["Unidad Deportiva", "Pascual Guerrero", "Ciclovía"],
-  },
-  bienestar: {
-    label: "Bienestar",
-    profile: "Salud, spa y calma.",
-    mustGo: ["Ciudad Jardín", "Tequendama", "Pance"],
-  },
-  compras: {
-    label: "Compras",
-    profile: "Diseño local y centros comerciales.",
-    mustGo: ["Unicentro", "Chipichape", "Loma de la Cruz"],
-  },
-};
 
 type ExperienceContextValue = {
   language: LanguageCode;
@@ -78,7 +38,7 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<LanguageCode>(
     LANGUAGES[locale] ? locale : "es"
   );
-  const [selectedInterests, setSelectedInterests] = useState<InterestId[]>(["salsa", "patrimonio"]);
+  const [selectedInterests, setSelectedInterests] = useState<InterestId[]>(["cultural_salsa"]);
   const [travelGroup, setTravelGroup] = useState<TravelGroup>("pareja");
   const [pace, setPace] = useState<Pace>("tranquilo");
 

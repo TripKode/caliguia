@@ -13,6 +13,16 @@ import {
 import { useMap } from "@/hooks/UseMap";
 import { saveActiveVoiceSample } from "@/components/providers/voiceSampleStore";
 import { getVoiceReferenceText, VOICE_REFERENCE_VERSION } from "@/lib/voice-reference";
+import {
+  TOURISM_INTERESTS,
+  normalizeTravelProfile,
+  type CityVibe,
+  type Pace,
+  type TourismInterestId,
+  type TravelGroup,
+  type TravelProfile,
+  type TravelStyle,
+} from "@/lib/travel-profile";
 import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -49,6 +59,17 @@ const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; flag: string;
   { code: "es", label: "ES", flag: "co", name: "Español" },
   { code: "en", label: "EN", flag: "us", name: "Inglés" },
   { code: "pt", label: "PT", flag: "br", name: "Portugués" },
+];
+const PROFILE_INTEREST_IDS = Object.keys(TOURISM_INTERESTS) as TourismInterestId[];
+const TRAVEL_GROUP_OPTIONS: Array<{ id: TravelGroup; labelKey: string }> = [
+  { id: "solo", labelKey: "groupSolo" },
+  { id: "pareja", labelKey: "groupPareja" },
+  { id: "familia", labelKey: "groupFamilia" },
+  { id: "grupo", labelKey: "groupGrupo" },
+];
+const PACE_OPTIONS: Array<{ id: Pace; labelKey: string }> = [
+  { id: "tranquilo", labelKey: "paceTranquilo" },
+  { id: "rapido", labelKey: "paceRapido" },
 ];
 function getFallbackVoiceReading(language: LanguageCode) {
   return getVoiceReferenceText(language);
@@ -124,7 +145,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [languageSetupSaving, setLanguageSetupSaving] = useState(false);
   const [languageSetupError, setLanguageSetupError] = useState("");
   const [showVoiceSetupModal, setShowVoiceSetupModal] = useState(false);
-  const [userProfile, setUserProfile] = useState<{ interests: string[], style: string, vibe: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<TravelProfile | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileSaveStatus, setProfileSaveStatus] = useState<"idle" | "saved" | "error">("idle");
   const [voiceCloneStatus, setVoiceCloneStatus] = useState<"idle" | "recording" | "uploading" | "generating" | "ready" | "error">("idle");
@@ -159,10 +180,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       // Preferences already fetched in the language check effect below
       // We load from sessionStorage as fast fallback until DB responds
       const cached = sessionStorage.getItem("caliguia_user_profile");
-      if (cached) setUserProfile(JSON.parse(cached));
+      if (cached) setUserProfile(normalizeTravelProfile(JSON.parse(cached)));
     } else if (status === "unauthenticated") {
       const saved = sessionStorage.getItem("caliguia_user_profile");
-      if (saved) setUserProfile(JSON.parse(saved));
+      if (saved) setUserProfile(normalizeTravelProfile(JSON.parse(saved)));
     }
   }, [status]);
 
@@ -221,12 +242,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
             }
             // Load travel preferences from DB
             if (preferences.travelPreferences) {
-              const prefs = preferences.travelPreferences as { interests?: string[], style?: string, vibe?: string };
-              const profile = {
-                interests: prefs.interests || [],
-                style: prefs.style || 'caminante',
-                vibe: prefs.vibe || 'explorador',
-              };
+              const profile = normalizeTravelProfile(preferences.travelPreferences);
               setUserProfile(profile);
               sessionStorage.setItem("caliguia_user_profile", JSON.stringify(profile));
             }
@@ -370,9 +386,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     setVoiceReadingText(getFallbackVoiceReading(language));
   }, [language]);
 
-  const saveProfile = async (profile: { interests: string[], style: string, vibe: string }) => {
-    setUserProfile(profile);
-    sessionStorage.setItem("caliguia_user_profile", JSON.stringify(profile));
+  const saveProfile = async (profile: TravelProfile) => {
+    const normalizedProfile = normalizeTravelProfile(profile);
+    setUserProfile(normalizedProfile);
+    sessionStorage.setItem("caliguia_user_profile", JSON.stringify(normalizedProfile));
 
     if (status === "authenticated") {
       setIsSavingProfile(true);
@@ -381,7 +398,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
         const res = await fetch("/api/users/me/preferences", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ travelPreferences: profile }),
+          body: JSON.stringify({ travelPreferences: normalizedProfile }),
         });
         setProfileSaveStatus(res.ok ? "saved" : "error");
         if (res.ok) {
@@ -792,7 +809,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
             content: m.content
           })),
           prompt: `
-            ${userProfile ? `Perfil del usuario: Intereses: ${userProfile.interests.join(", ")}, Estilo: ${userProfile.style}, Vibe: ${userProfile.vibe}.` : ""}
+            ${userProfile ? `Perfil del usuario: Segmentos turísticos: ${userProfile.tourismSegments.join(", ")}. Intereses: ${userProfile.interests.join(", ")}. Estilo: ${userProfile.style}. Vibe: ${userProfile.vibe}. Grupo: ${userProfile.travelGroup}. Ritmo: ${userProfile.pace}. Must-go sugeridos: ${userProfile.mustGo.join(", ")}.` : ""}
             Contexto de ubicación/entorno: ${context || "Explorando la ciudad de Cali"}
             ${safetyContext}
             Responde con tono amable, cercano y natural, como si estuvieras acompañando a la persona con calma.
@@ -1724,31 +1741,26 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                         </span>
                       )}
                     </label>
-                    <div className="flex flex-wrap gap-2">
-                      {([
-                        { id: 'cultura', labelKey: 'interestCultura' },
-                        { id: 'gastronomia', labelKey: 'interestGastronomia' },
-                        { id: 'salsa', labelKey: 'interestSalsa' },
-                        { id: 'naturaleza', labelKey: 'interestNaturaleza' },
-                        { id: 'compras', labelKey: 'interestCompras' },
-                        { id: 'arte', labelKey: 'interestArte' },
-                        { id: 'historia', labelKey: 'interestHistoria' },
-                        { id: 'bebidas', labelKey: 'interestBebidas' },
-                      ] as const).map(item => {
-                        const isSelected = userProfile?.interests.includes(item.id);
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {PROFILE_INTEREST_IDS.map(id => {
+                        const item = TOURISM_INTERESTS[id];
+                        const isSelected = userProfile?.interests.includes(id);
                         return (
                           <button
-                            key={item.id}
+                            key={id}
                             disabled={!isAuthenticated}
                             onClick={() => {
                               const current = userProfile?.interests || [];
-                              const next = isSelected ? current.filter(i => i !== item.id) : [...current, item.id];
-                              setUserProfile(prev => ({ ...prev!, interests: next, style: prev?.style || 'caminante', vibe: prev?.vibe || 'explorador' }));
+                              const next = isSelected ? current.filter(i => i !== id) : [...current, id];
+                              setUserProfile(prev => normalizeTravelProfile({ ...(prev || {}), interests: next, tourismSegments: next }));
                             }}
-                            className={`px-3 py-2 rounded-xl text-[12px] font-bold transition-all border ${isSelected ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20' : 'bg-zinc-50 border-zinc-100 text-zinc-600 hover:bg-zinc-100'
+                            className={`rounded-2xl border p-3 text-left transition-all ${isSelected ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20' : 'bg-zinc-50 border-zinc-100 text-zinc-600 hover:bg-zinc-100'
                               } disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-zinc-50`}
                           >
-                            {t(item.labelKey)}
+                            <span className="block text-[12px] font-black leading-tight">{t(item.labelKey)}</span>
+                            <span className={`mt-1 block text-[10px] font-medium leading-snug ${isSelected ? "text-blue-100" : "text-zinc-400"}`}>
+                              {t(item.profileKey)}
+                            </span>
                           </button>
                         );
                       })}
@@ -1768,7 +1780,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                           <button
                             key={item.id}
                             disabled={!isAuthenticated}
-                            onClick={() => setUserProfile(prev => ({ ...prev!, interests: prev?.interests || [], style: item.id, vibe: prev?.vibe || 'explorador' }))}
+                            onClick={() => setUserProfile(prev => normalizeTravelProfile({ ...(prev || {}), style: item.id as TravelStyle }))}
                             className={`p-3 rounded-2xl text-left transition-all border ${isSelected ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-zinc-50 border-zinc-100 text-zinc-600 hover:bg-zinc-100'
                               } disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-zinc-50`}
                           >
@@ -1794,7 +1806,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                           <button
                             key={item.id}
                             disabled={!isAuthenticated}
-                            onClick={() => setUserProfile(prev => ({ ...prev!, interests: prev?.interests || [], style: prev?.style || 'caminante', vibe: item.id }))}
+                            onClick={() => setUserProfile(prev => normalizeTravelProfile({ ...(prev || {}), vibe: item.id as CityVibe }))}
                             className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all border ${isSelected ? 'bg-zinc-900 border-zinc-900 text-white shadow-lg' : 'bg-zinc-50 border-zinc-100 text-zinc-400'
                               } disabled:cursor-not-allowed disabled:opacity-45`}
                           >
@@ -1806,10 +1818,66 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     </div>
                   </div>
 
+                  {/* Trip shape */}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 block mb-3">{t("travelGroup")}</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {TRAVEL_GROUP_OPTIONS.map(item => {
+                          const isSelected = userProfile?.travelGroup === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              disabled={!isAuthenticated}
+                              onClick={() => setUserProfile(prev => normalizeTravelProfile({ ...(prev || {}), travelGroup: item.id }))}
+                              className={`px-3 py-2 rounded-xl text-[11px] font-black transition-all border ${isSelected ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-zinc-50 border-zinc-100 text-zinc-500 hover:bg-zinc-100'
+                                } disabled:cursor-not-allowed disabled:opacity-45`}
+                            >
+                              {t(item.labelKey)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 block mb-3">{t("pace")}</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {PACE_OPTIONS.map(item => {
+                          const isSelected = userProfile?.pace === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              disabled={!isAuthenticated}
+                              onClick={() => setUserProfile(prev => normalizeTravelProfile({ ...(prev || {}), pace: item.id }))}
+                              className={`px-3 py-2 rounded-xl text-[11px] font-black transition-all border ${isSelected ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-zinc-50 border-zinc-100 text-zinc-500 hover:bg-zinc-100'
+                                } disabled:cursor-not-allowed disabled:opacity-45`}
+                            >
+                              {t(item.labelKey)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {userProfile?.mustGo.length ? (
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 block mb-2">{t("mustGo")}</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {userProfile.mustGo.slice(0, 7).map(place => (
+                          <span key={place} className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold text-zinc-500">
+                            {place}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Save button with status feedback */}
                   <div className="flex flex-col gap-1.5">
                     <button
-                      onClick={() => saveProfile(userProfile || { interests: [], style: 'caminante', vibe: 'explorador' })}
+                      onClick={() => saveProfile(userProfile || normalizeTravelProfile({}))}
                       disabled={!isAuthenticated || isSavingProfile}
                       className={`w-full py-4 rounded-2xl font-bold text-[14px] shadow-lg active:scale-95 transition-all disabled:cursor-not-allowed disabled:active:scale-100 ${profileSaveStatus === "saved"
                           ? "bg-emerald-500 text-white shadow-emerald-500/20"

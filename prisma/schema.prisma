@@ -33,6 +33,8 @@ model User {
   permissions           String[]
   preferredLanguage     String       @default("es")
   languageConfigured    Boolean      @default(false)
+  // TravelProfile JSON from lib/travel-profile.ts:
+  // interests/tourismSegments, style, vibe, travelGroup, pace, mustGo, profileVersion.
   travelPreferences     Json?
   chatHistory           Json?
 

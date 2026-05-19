@@ -125,6 +125,8 @@ export interface CaliEvent {
     organizer: string;
     category: string;
     time: string;
+    startDate: string;
+    endDate: string;
     location: string;
     description: string;
     icon: string;
