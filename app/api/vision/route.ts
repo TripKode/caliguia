@@ -4,8 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 const GROQ_API_KEY = process.env.GROQ_API_KEY!;
 const GROQ_MODEL = process.env.GROQ_VISION_MODEL ?? "meta-llama/llama-4-scout-17b-16e-instruct";
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const SUPPORTED_LANGUAGES = new Set(["es", "en", "pt"]);
 
-const CALI_LANDMARKS_LIST = [
+const DEFAULT_CALI_LANDMARKS = [
   "Cristo Rey", "Cerro de las Tres Cruces", "Iglesia La Ermita", "Gato de Tejada",
   "Bulevar del Río", "Plaza de Caicedo", "Teatro Municipal Enrique Buenaventura",
   "Museo La Tertulia", "Parque del Perro", "San Antonio", "Zoológico de Cali",
@@ -13,19 +14,88 @@ const CALI_LANDMARKS_LIST = [
   "Iglesia de San Francisco", "Museo Arqueológico La Merced", "Torre de Cali",
   "Avenida Roosevelt", "Plaza de Toros de Cañaveralejo", "Puente Ortiz",
   "Palacio Nacional de Cali", "Casa Proartes", "Parque Panamericano",
-].join(", ");
+];
 
-const SYSTEM_PROMPT = `Eres un experto guía turístico de Santiago de Cali, Valle del Cauca, Colombia. Analiza la imagen proporcionada con mucha atención.
+const NO_RECOGNITION = {
+  es: "No logro reconocer un monumento turístico de Cali en esta vista.",
+  en: "I cannot recognize a tourist landmark in Cali from this view.",
+  pt: "Nao consigo reconhecer um ponto turistico de Cali nesta vista.",
+};
 
-REGLA ESTRICTA E IRROMPIBLE: Solo puedes identificar y hablar sobre monumentos, lugares históricos, turísticos, íconos culturales o sitios reconocibles de la ciudad de Cali, como: ${CALI_LANDMARKS_LIST}.
+function normalizeLanguage(language: unknown): "es" | "en" | "pt" {
+  return typeof language === "string" && SUPPORTED_LANGUAGES.has(language) ? language as "es" | "en" | "pt" : "es";
+}
 
-CASOS DE RESPUESTA:
-1. Si reconoces claramente uno de estos sitios icónicos de Cali → responde con UNA descripción cultural breve y fascinante (máximo 60 palabras), ideal para ser escuchada en voz alta. Comienza directamente con el nombre del lugar. Sin saludos, sin introducciones.
-2. Si la imagen muestra un lugar genérico, interior de edificio, calle sin monumentos, persona, objeto, o cualquier lugar que NO sea un monumento turístico identificable de Cali → responde EXACTAMENTE y solo: "No logro reconocer un monumento turístico de Cali en esta vista."
+function cleanLandmarkName(value: unknown) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+}
 
-Solo español colombiano. Sin emojis. Sin listas. Solo prosa narrativa fluida apta para audio.`;
+function buildSystemPrompt(params: {
+  language: "es" | "en" | "pt";
+  landmarkNames: string[];
+  coords?: { lat?: number; lng?: number; accuracy?: number } | null;
+  currentComuna?: string;
+}) {
+  const landmarkList = params.landmarkNames.join(", ");
+  const locationHint = params.coords?.lat && params.coords?.lng
+    ? `Ubicacion aproximada del usuario: lat ${Number(params.coords.lat).toFixed(5)}, lng ${Number(params.coords.lng).toFixed(5)}${params.coords.accuracy ? `, precision ${Math.round(Number(params.coords.accuracy))}m` : ""}.`
+    : "No hay coordenadas precisas disponibles.";
+  const comunaHint = params.currentComuna ? `Comuna o zona actual: ${params.currentComuna}.` : "";
 
-const NO_RECOGNITION_PHRASE = "No logro reconocer un monumento turístico de Cali en esta vista.";
+  const languageRules = {
+    es: `Responde en español colombiano natural, apto para audio.`,
+    en: `Respond in natural English, suitable for audio.`,
+    pt: `Responda em portugues natural, adequado para audio.`,
+  };
+
+  return `Eres un experto guía turístico de Santiago de Cali, Valle del Cauca, Colombia. Analiza la imagen con mucha atención y usa el contexto de ubicación para reducir falsos positivos.
+
+${locationHint}
+${comunaHint}
+
+Lugares permitidos para reconocer en esta vista: ${landmarkList}.
+
+REGLAS ESTRICTAS:
+1. Solo puedes reconocer lugares de la lista permitida. No inventes nombres.
+2. Si reconoces claramente uno de esos lugares, responde SOLO JSON válido con:
+{"recognized":true,"landmarkName":"Nombre exacto de la lista","text":"Descripción cultural breve, fascinante y hablable, máximo 45 palabras."}
+3. Si la imagen es ambigua, genérica, interior, persona, objeto, calle sin sitio identificable, o no coincide claramente con la lista, responde SOLO:
+{"recognized":false,"landmarkName":null,"text":"${NO_RECOGNITION[params.language]}"}
+4. ${languageRules[params.language]}
+5. Sin markdown, sin emojis, sin listas, sin texto fuera del JSON.`;
+}
+
+function parseVisionContent(content: string, language: "es" | "en" | "pt") {
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const recognized = Boolean(parsed.recognized);
+      const landmarkName = cleanLandmarkName(parsed.landmarkName);
+      const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
+      return {
+        recognized: recognized && Boolean(landmarkName) && Boolean(text),
+        landmarkName: recognized ? landmarkName : null,
+        text: text || NO_RECOGNITION[language],
+      };
+    } catch {
+      // fall through to legacy parsing
+    }
+  }
+
+  const isNotRecognized =
+    content.toLowerCase().includes("no logro reconocer") ||
+    content.toLowerCase().includes("no reconozco") ||
+    content.toLowerCase().includes("cannot recognize") ||
+    content.toLowerCase().includes("nao consigo reconhecer") ||
+    content.toLowerCase().includes("não consigo reconhecer");
+
+  return {
+    recognized: !isNotRecognized,
+    landmarkName: !isNotRecognized ? cleanLandmarkName(content.split(/[,.]/)[0]) : null,
+    text: isNotRecognized ? NO_RECOGNITION[language] : content.trim(),
+  };
+}
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
@@ -38,7 +108,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing image" }, { status: 400 });
   }
 
-  const { image } = body as { image: string };
+  const {
+    image,
+    language: rawLanguage,
+    coords,
+    landmarks,
+    currentComuna,
+  } = body as {
+    image: string;
+    language?: string;
+    coords?: { lat?: number; lng?: number; accuracy?: number } | null;
+    landmarks?: Array<{ name?: string }>;
+    currentComuna?: { name?: string } | string | null;
+  };
+  const language = normalizeLanguage(rawLanguage);
+  const dynamicLandmarks = Array.isArray(landmarks)
+    ? landmarks.map(item => cleanLandmarkName(item?.name)).filter(Boolean).slice(0, 18)
+    : [];
+  const landmarkNames = Array.from(new Set([...dynamicLandmarks, ...DEFAULT_CALI_LANDMARKS])).slice(0, 35);
+  const currentComunaName = typeof currentComuna === "string" ? currentComuna : currentComuna?.name;
+  const systemPrompt = buildSystemPrompt({
+    language,
+    landmarkNames,
+    coords,
+    currentComuna: currentComunaName,
+  });
 
   try {
     const response = await fetch(GROQ_ENDPOINT, {
@@ -50,11 +144,11 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: [
-              { type: "text", text: "Analiza esta imagen y responde según tus instrucciones estrictas." },
+              { type: "text", text: "Analiza esta imagen y responde solo con el JSON indicado." },
               { type: "image_url", image_url: { url: image } }, // image ya viene como data URL base64
             ],
           },
@@ -77,13 +171,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty response from Groq" }, { status: 502 });
     }
 
-    const isNotRecognized =
-      text.toLowerCase().includes("no logro reconocer") ||
-      text.toLowerCase().includes("no reconozco");
+    const parsed = parseVisionContent(text, language);
 
     return NextResponse.json({
-      text: isNotRecognized ? NO_RECOGNITION_PHRASE : text,
-      recognized: !isNotRecognized,
+      text: parsed.text,
+      landmarkName: parsed.landmarkName,
+      recognized: parsed.recognized,
       model: GROQ_MODEL,
     });
 

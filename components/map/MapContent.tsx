@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useSession } from "next-auth/react";
 import { useTranslations } from "next-intl";
 import Webcam from "react-webcam";
+import { BalancedAROverlay, type BalancedARPoint } from "@/components/ar/BalancedAROverlay";
 import { AIFloatingIsland } from "@/components/island/Island";
 import { useMap } from "@/hooks/UseMap";
 import { Panel } from "@/components/profile/Panel";
@@ -769,14 +770,81 @@ function MapContent() {
     }, [authStatus]);
 
 
-    const { captureAndAnalyze, isAnalyzing, startAnalysis, stopAnalysis, isReady } = useARVision(webcamRef as React.RefObject<any>);
+    const {
+        captureAndAnalyze,
+        isAnalyzing,
+        startAnalysis,
+        stopAnalysis,
+        isReady,
+        statusText: arVisionStatusText,
+        lastLandmarkName: arLastLandmarkName,
+    } = useARVision(webcamRef as React.RefObject<any>);
     const tourStartMessage = useMemo(() => getDailyTourStartMessage(language), [language]);
     const [isARScanning, setIsARScanning] = useState(false);
     const isAuthenticated = authStatus === "authenticated";
+    const arVisionContext = useMemo(() => ({
+        language,
+        coords,
+        currentComuna: currentComuna ? { name: currentComuna.name, risk: currentComuna.risk } : null,
+        landmarks: [
+            ...localLandmarks.slice(0, 10).map(landmark => ({
+                name: landmark.name,
+                lat: landmark.lat,
+                lng: landmark.lng,
+                description: landmark.description,
+            })),
+            ...places.slice(0, 8).map(place => ({
+                name: place.name,
+                lat: place.geometry.location.lat(),
+                lng: place.geometry.location.lng(),
+                description: Array.isArray(place.types) ? place.types.slice(0, 3).join(", ") : "",
+            })),
+        ],
+    }), [language, coords, currentComuna, localLandmarks, places]);
+    const arHudPoints = useMemo<BalancedARPoint[]>(() => {
+        if (!coords) return [];
+
+        if (activeRouteLandmark) {
+            const destination = localLandmarks.find(landmark => hasUsefulNameOverlap(landmark.name, activeRouteLandmark))
+                || (externalLandmark?.name && hasUsefulNameOverlap(externalLandmark.name, activeRouteLandmark) ? externalLandmark : null);
+            const routePoints = routeInterestPoints
+                .filter(point => typeof point.lat === "number" && typeof point.lng === "number")
+                .slice(0, 6)
+                .map((point, index): BalancedARPoint => ({
+                    id: `route-${point.name || index}`,
+                    name: point.name || `Parada ${index + 1}`,
+                    lat: point.lat,
+                    lng: point.lng,
+                    kind: index === 0 ? "bot" : "stop",
+                }));
+
+            if (destination?.lat && destination?.lng) {
+                routePoints.push({
+                    id: `destination-${destination.name}`,
+                    name: destination.name,
+                    lat: destination.lat,
+                    lng: destination.lng,
+                    kind: routePoints.length === 0 ? "bot" : "destination",
+                });
+            }
+
+            return routePoints;
+        }
+
+        return localLandmarks
+            .slice(0, 5)
+            .map((landmark, index): BalancedARPoint => ({
+                id: `nearby-${landmark.name}`,
+                name: landmark.name,
+                lat: landmark.lat,
+                lng: landmark.lng,
+                kind: index === 0 ? "bot" : "nearby",
+            }));
+    }, [activeRouteLandmark, coords, externalLandmark, localLandmarks, routeInterestPoints]);
 
     useEffect(() => {
         if (experienceMode === "ar" && isReady) {
-            startAnalysis(async (detectedText) => {
+            startAnalysis(arVisionContext, async ({ text: detectedText, landmarkName }) => {
                 // D. Conectar con VoiceNarrator real (no window.speechSynthesis crudo)
                 // Activar ondas de la AIFloatingIsland
                 setIsARScanning(true);
@@ -796,7 +864,7 @@ function MapContent() {
                             speak({
                                 type: "monument",
                                 text: data.text,
-                                title: detectedText.split(" ").slice(0, 4).join(" "),
+                                title: landmarkName,
                                 icon: "🏛️",
                             });
                         }
@@ -815,7 +883,7 @@ function MapContent() {
             stopAnalysis();
             setIsARScanning(false);
         };
-    }, [experienceMode, isReady, startAnalysis, stopAnalysis, speak, language]);
+    }, [experienceMode, isReady, startAnalysis, stopAnalysis, speak, language, arVisionContext]);
 
     return (
         <div className="relative w-full h-dvh overflow-hidden bg-[#f7f6f3] font-sans flex">
@@ -851,8 +919,31 @@ function MapContent() {
                             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0,rgba(0,0,0,0.10)_58%,rgba(0,0,0,0.34)_100%)]" />
                             <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-linear-to-b from-black/30 to-transparent" />
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-linear-to-t from-black/35 to-transparent" />
+                            <BalancedAROverlay
+                                userCoords={coords}
+                                points={arHudPoints}
+                                language={language}
+                            />
                             <div className="pointer-events-none absolute left-4 top-24 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/85 backdrop-blur-md md:left-6">
                                 AR
+                            </div>
+                            <div className="pointer-events-none absolute left-4 right-4 top-40 md:left-6 md:right-auto md:max-w-sm">
+                                <div className="rounded-2xl border border-white/20 bg-black/35 px-4 py-3 text-white shadow-lg shadow-black/20 backdrop-blur-md">
+                                    <div className="flex items-center gap-2">
+                                        <span className={`h-2.5 w-2.5 rounded-full ${isAnalyzing ? "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.18)]" : "bg-zinc-400"}`} />
+                                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-white/70">
+                                            {isAnalyzing ? "Escaneo activo" : "AR pausado"}
+                                        </span>
+                                    </div>
+                                    <p className="mt-1.5 text-[13px] font-semibold leading-snug text-white/92">
+                                        {arVisionStatusText}
+                                    </p>
+                                    {arLastLandmarkName && (
+                                        <p className="mt-1 text-[11px] font-medium text-white/60">
+                                            Ultimo lugar: {arLastLandmarkName}
+                                        </p>
+                                    )}
+                                </div>
                             </div>
                             <div className="absolute right-4 top-24 flex items-center gap-2 md:right-6">
                                 <button
@@ -876,7 +967,7 @@ function MapContent() {
                                     title="Cambiar zoom"
                                     disabled={!arZoomSupported}
                                 >
-                                    x{arZoomLevel === 0.05 ? "0.05" : arZoomLevel}
+                                    x{arZoomLevel}
                                 </button>
                             </div>
                             {arCameraError && (

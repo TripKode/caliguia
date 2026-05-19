@@ -7,6 +7,21 @@ interface VisionState {
   isReady: boolean;
   isAnalyzing: boolean;
   error: string | null;
+  statusText: string;
+  lastLandmarkName: string | null;
+}
+
+interface ARVisionContext {
+  language?: "es" | "en" | "pt";
+  coords?: { lat: number; lng: number; accuracy: number } | null;
+  landmarks?: Array<{ name: string; lat?: number; lng?: number; description?: string }>;
+  currentComuna?: { name: string; risk?: string } | null;
+}
+
+interface VisionApiResult {
+  recognized?: boolean;
+  landmarkName?: string | null;
+  text?: string;
 }
 
 // react-webcam exposes the inner <video> element at .video
@@ -24,18 +39,33 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
     isReady: true, // Ready immediately, no MediaPipe required
     isAnalyzing: false,
     error: null,
+    statusText: "Apunta la cámara hacia un lugar icónico.",
+    lastLandmarkName: null,
   });
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const initialTimeoutRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isProcessingAPIRef = useRef(false);
   const lastRecognizedRef = useRef<string | null>(null);
+
+  const normalizeLandmarkKey = useCallback((value: string) => {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\b(el|la|los|las|del|de|parque|plaza|monumento|museo|iglesia)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }, []);
 
   // Initialize canvas only once
   useEffect(() => {
     canvasRef.current = document.createElement("canvas");
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (initialTimeoutRef.current) window.clearTimeout(initialTimeoutRef.current);
     };
   }, []);
 
@@ -59,54 +89,91 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
     return canvas.toDataURL("image/jpeg", 0.6); // 60% quality — fast & light enough for vision API
   }, [webcamRef]);
 
-  const processVisionAPI = useCallback(async (base64Image: string, onResult: (text: string) => void) => {
+  const processVisionAPI = useCallback(async (
+    base64Image: string,
+    context: ARVisionContext,
+    onResult: (result: { text: string; landmarkName: string }) => void
+  ) => {
     if (isProcessingAPIRef.current) return;
     
     isProcessingAPIRef.current = true;
+    setVisionState((prev) => ({ ...prev, statusText: "Analizando vista...", error: null }));
     try {
       const res = await fetch("/api/vision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64Image }),
+        body: JSON.stringify({
+          image: base64Image,
+          language: context.language || "es",
+          coords: context.coords,
+          landmarks: context.landmarks || [],
+          currentComuna: context.currentComuna,
+        }),
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as VisionApiResult;
         
-        if (data.recognized && data.text) {
-          // Extraemos las primeras palabras del nombre del monumento para compararlo con el último hablado
-          const monumentKey = data.text.split(" ").slice(0, 4).join(" ").toLowerCase();
+        if (data.recognized && data.text && data.landmarkName) {
+          const monumentKey = normalizeLandmarkKey(data.landmarkName);
           
           if (lastRecognizedRef.current !== monumentKey) {
             lastRecognizedRef.current = monumentKey;
-            onResult(data.text);
+            setVisionState((prev) => ({
+              ...prev,
+              statusText: `Reconocido: ${data.landmarkName}`,
+              lastLandmarkName: data.landmarkName || null,
+            }));
+            onResult({ text: data.text, landmarkName: data.landmarkName });
           } else {
-            console.log("📍 Monumento ya narrado, ignorando para no repetir:", monumentKey);
+            setVisionState((prev) => ({
+              ...prev,
+              statusText: `Ya narrado: ${data.landmarkName}`,
+              lastLandmarkName: data.landmarkName || null,
+            }));
+            console.log("Monumento ya narrado, ignorando para no repetir:", monumentKey);
           }
+        } else {
+          setVisionState((prev) => ({
+            ...prev,
+            statusText: "No reconozco un lugar icónico todavía. Prueba apuntar al frente del monumento.",
+            lastLandmarkName: null,
+          }));
         }
+      } else {
+        setVisionState((prev) => ({ ...prev, statusText: "No pude analizar la vista ahora.", error: `Vision API ${res.status}` }));
       }
     } catch (err) {
       console.error("Vision API Call Failed", err);
+      setVisionState((prev) => ({ ...prev, statusText: "No pude analizar la vista ahora.", error: "Vision API failed" }));
     } finally {
       isProcessingAPIRef.current = false;
     }
-  }, []);
+  }, [normalizeLandmarkKey]);
 
   const startAnalysis = useCallback(
-    (onDetected: (description: string) => void) => {
-      setVisionState((prev) => ({ ...prev, isAnalyzing: true }));
+    (context: ARVisionContext, onDetected: (result: { text: string; landmarkName: string }) => void) => {
+      setVisionState((prev) => ({
+        ...prev,
+        isAnalyzing: true,
+        statusText: "Analizando vista...",
+        lastLandmarkName: null,
+      }));
       lastRecognizedRef.current = null; // Reiniciar estado al entrar
 
       if (intervalRef.current) clearInterval(intervalRef.current);
 
-      // Latido constante de Groq Vision (1 frame cada 10 segundos)
-      intervalRef.current = setInterval(() => {
+      const analyzeOnce = () => {
         if (!isProcessingAPIRef.current) {
           const frameBase64 = captureFrameEfficiently();
           if (frameBase64) {
-            processVisionAPI(frameBase64, onDetected);
+            processVisionAPI(frameBase64, context, onDetected);
           }
         }
-      }, 10000); // 10 segundos: asegura <= 6 requests por minuto, perfectamente dentro del rate limit gratuito.
+      };
+
+      if (initialTimeoutRef.current) window.clearTimeout(initialTimeoutRef.current);
+      initialTimeoutRef.current = window.setTimeout(analyzeOnce, 450);
+      intervalRef.current = setInterval(analyzeOnce, 10000); // <= 6 requests/min.
     },
     [captureFrameEfficiently, processVisionAPI]
   );
@@ -116,14 +183,25 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-    setVisionState((prev) => ({ ...prev, isAnalyzing: false }));
+    if (initialTimeoutRef.current) {
+      window.clearTimeout(initialTimeoutRef.current);
+      initialTimeoutRef.current = null;
+    }
+    setVisionState((prev) => ({
+      ...prev,
+      isAnalyzing: false,
+      statusText: "Apunta la cámara hacia un lugar icónico.",
+    }));
   }, []);
 
-  const captureAndAnalyze = useCallback(async (onDetected: (text: string) => void) => {
+  const captureAndAnalyze = useCallback(async (
+    context: ARVisionContext,
+    onDetected: (result: { text: string; landmarkName: string }) => void
+  ) => {
     if (isProcessingAPIRef.current) return;
     const frameBase64 = captureFrameEfficiently();
     if (frameBase64) {
-      await processVisionAPI(frameBase64, onDetected);
+      await processVisionAPI(frameBase64, context, onDetected);
     }
   }, [captureFrameEfficiently, processVisionAPI]);
 

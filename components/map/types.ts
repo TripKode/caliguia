@@ -2,7 +2,7 @@ export type Status = "idle" | "loading" | "tracking" | "denied" | "error";
 export type LayerMode = "risk" | "heatmap" | "none";
 export type ActiveTab = "local" | "places" | "zones" | "experience";
 export type RiskLevel = "low" | "medium" | "high" | "safe";
-export type ArZoomLevel = 1 | 10 | 0.05;
+export type ArZoomLevel = 1 | 2 | 4;
 export type VerbosityLevel = "mucho" | "normal" | "poco";
 
 export interface ComunaData {

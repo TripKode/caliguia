@@ -248,7 +248,7 @@ export function UseHome() {
     const [currentImageIdx, setCurrentImageIdx] = useState(0);
     const [arCameraError, setArCameraError] = useState<string | null>(null);
     const [arFacingMode, setArFacingMode] = useState<"environment" | "user">("environment");
-    const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(0.05);
+    const [arZoomLevel, setArZoomLevel] = useState<ArZoomLevel>(1);
     const [arZoomSupported, setArZoomSupported] = useState(false);
     const [voiceMuted, setVoiceMuted] = useState(false);
     const [verbosity, setVerbosity] = useState<VerbosityLevel>("normal");

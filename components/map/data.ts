@@ -76,7 +76,7 @@ export const CALI_BOUNDS = {
   east: -76.43,
   west: -76.62,
 };
-export const AR_ZOOM_LEVELS = [0.05, 1, 10] as const;
+export const AR_ZOOM_LEVELS = [1, 2, 4] as const;
 
 export const CALI_EVENTS_TODAY: CaliEvent[] = [
   {
