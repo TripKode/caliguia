@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
   const formUserId = form?.get("userId");
   const displayName = form?.get("displayName");
   const referenceText = form?.get("referenceText");
+  const referenceTextVersion = form?.get("referenceTextVersion");
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
@@ -93,6 +94,7 @@ export async function POST(req: NextRequest) {
           objectName,
           voiceKey,
           referenceText: cleanReferenceText || null,
+          referenceTextVersion: typeof referenceTextVersion === "string" ? referenceTextVersion : null,
           accent: "caleño neutro humano natural",
           note: "F5-TTS local uses this saved GCS voice sample and reference text; no remote voice_id is generated.",
         },

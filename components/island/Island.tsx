@@ -12,6 +12,7 @@ import {
 } from "../providers/ExperienceProvider";
 import { useMap } from "@/hooks/UseMap";
 import { saveActiveVoiceSample } from "@/components/providers/voiceSampleStore";
+import { getVoiceReferenceText, VOICE_REFERENCE_VERSION } from "@/lib/voice-reference";
 import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -49,27 +50,8 @@ const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; flag: string;
   { code: "en", label: "EN", flag: "us", name: "Inglés" },
   { code: "pt", label: "PT", flag: "br", name: "Portugués" },
 ];
-const VOICE_READING_FALLBACKS: Record<LanguageCode, string[]> = {
-  es: [
-    "Cali despierta con salsa, brisa cálida y memoria viva. Hoy caminaré atento a sus calles, sus parques y las historias que aparecen en cada esquina.",
-    "Entre montañas, murales y sabores del Valle, mi voz acompañará este recorrido con calma, curiosidad y ganas de descubrir lo que Cali guarda cerca.",
-    "Soy la voz de CaliGuía. Narraré los caminos, los monumentos y esos detalles pequeños que hacen que una ciudad se sienta cercana y sorprendente.",
-  ],
-  en: [
-    "Cali wakes up with salsa, warm air, and living memory. Today I will follow its streets, parks, and stories with calm curiosity.",
-    "Between mountains, murals, and local flavor, my voice will guide this route and notice the small details that make Cali feel alive.",
-    "I am the voice of CaliGuía. I will narrate routes, landmarks, and the little discoveries that make a city feel close and surprising.",
-  ],
-  pt: [
-    "Cali desperta com salsa, brisa quente e memória viva. Hoje vou caminhar atento às ruas, aos parques e às histórias de cada esquina.",
-    "Entre montanhas, murais e sabores locais, minha voz acompanhará este roteiro com calma, curiosidade e vontade de descobrir Cali.",
-    "Sou a voz da CaliGuía. Vou narrar caminhos, monumentos e pequenos detalhes que fazem uma cidade parecer próxima e surpreendente.",
-  ],
-};
-
 function getFallbackVoiceReading(language: LanguageCode) {
-  const options = VOICE_READING_FALLBACKS[language] ?? VOICE_READING_FALLBACKS.es;
-  return options[Math.floor(Math.random() * options.length)];
+  return getVoiceReferenceText(language);
 }
 
 function getMessageLandmarkTags(content: string) {
@@ -420,30 +402,8 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
   const generateVoiceReadingText = useCallback(async () => {
     setIsGeneratingVoiceText(true);
-
-    try {
-      const response = await fetch("/api/narrate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "info",
-          language,
-          prompt: `Crea un texto original para que una persona lo lea en voz alta durante aproximadamente ${VOICE_SAMPLE_SECONDS} segundos y CaliGuía pueda clonar o ajustar su voz. Debe sonar natural, cálido, con acento caleño neutro y relacionado con Cali, Colombia. No incluyas instrucciones, comillas ni listas. Máximo 55 palabras.`,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Voice reading text generation failed");
-      }
-
-      const data = await response.json();
-      const text = typeof data.text === "string" ? data.text.trim() : "";
-      setVoiceReadingText(text || getFallbackVoiceReading(language));
-    } catch {
-      setVoiceReadingText(getFallbackVoiceReading(language));
-    } finally {
-      setIsGeneratingVoiceText(false);
-    }
+    setVoiceReadingText(getFallbackVoiceReading(language));
+    setIsGeneratingVoiceText(false);
   }, [language]);
 
   const chooseSetupLanguage = useCallback(async (nextLanguage: LanguageCode) => {
@@ -541,9 +501,29 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
   const saveVoiceSample = useCallback(async (audioBlob: Blob) => {
     setVoiceCloneStatus("uploading");
-    setVoiceCloneMessage(t("voiceSaving"));
+    setVoiceCloneMessage("Validando lectura...");
 
     const userId = getOrCreateUserId();
+    const voiceFile = new File([audioBlob], "caliguia-reference-voice.webm", { type: audioBlob.type || "audio/webm" });
+    const validationForm = new FormData();
+    validationForm.append("file", voiceFile);
+    validationForm.append("referenceText", voiceReadingText);
+    validationForm.append("language", language);
+
+    const validationResponse = await fetch("/api/voice/validate-reference", {
+      method: "POST",
+      body: validationForm,
+    });
+    const validation = await validationResponse.json().catch(() => null);
+
+    if (!validationResponse.ok || validation?.accepted === false) {
+      const score = typeof validation?.match_score === "number"
+        ? ` (${Math.round(validation.match_score * 100)}% de coincidencia)`
+        : "";
+      throw new Error(`Lee el texto tal como aparece y vuelve a grabar${score}.`);
+    }
+
+    setVoiceCloneMessage(t("voiceSaving"));
     await saveActiveVoiceSample(audioBlob);
 
     // If we are re-recording, delete the old voice just before creating the new one
@@ -557,10 +537,11 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
     }
 
     const formData = new FormData();
-    formData.append("file", new File([audioBlob], "caliguia-reference-voice.webm", { type: audioBlob.type || "audio/webm" }));
+    formData.append("file", voiceFile);
     formData.append("userId", session?.user?.id || userId);
     formData.append("displayName", userName);
     formData.append("referenceText", voiceReadingText);
+    formData.append("referenceTextVersion", VOICE_REFERENCE_VERSION);
 
     const response = await fetch("/api/clone-voice", {
       method: "POST",
@@ -688,9 +669,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
           return;
         }
 
-        saveVoiceSample(audioBlob).catch(() => {
+        saveVoiceSample(audioBlob).catch((error) => {
           setVoiceCloneStatus("error");
-          setVoiceCloneMessage(t("voiceError"));
+          setVoiceCloneMessage(error instanceof Error ? error.message : t("voiceError"));
         });
       };
 
