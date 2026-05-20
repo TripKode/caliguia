@@ -1424,6 +1424,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                         <span>{isAuthenticated ? t("signOut") : t("google")}</span>
                       </button>
                     </div>
+                  </div>
                     <div className="h-px bg-black/5 mx-[-12px] mb-4" />
                     {isAuthenticated && (
                       <button
