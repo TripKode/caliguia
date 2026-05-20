@@ -22,6 +22,8 @@ interface UseVoiceNarratorOptions {
 }
 
 const ACTIVE_PROVIDER_VOICE_STORAGE_KEY = "caliguia_active_provider_voice_id";
+const RECENT_NARRATION_TTL_MS = 120_000;
+const MAX_PENDING_NARRATIONS = 2;
 
 // ── Real voice from the browser ────────────────────────────────────────────
 export interface CaliVoice {
@@ -123,6 +125,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const queueRef = useRef<NarrationEvent[]>([]);
+  const recentNarrationKeysRef = useRef(new Map<string, number>());
   const isPlayingRef = useRef(false);
   const unlockedRef = useRef(false);
   const languageRef = useRef<LanguageCode>(language);
@@ -209,6 +212,12 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     utteranceRef.current = null;
   }, []);
 
+  const getNarrationKey = useCallback((event: Pick<NarrationEvent, "type" | "title" | "text">) => {
+    const semanticTitle = event.title?.trim().toLowerCase();
+    if (semanticTitle && event.type !== "chat") return `${event.type}:${semanticTitle}`;
+    return `${event.type}:${event.text.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 140)}`;
+  }, []);
+
   const notifyVoicePlaybackError = useCallback((event: NarrationEvent, error?: unknown) => {
     const message = error instanceof Error ? error.message : "Voice generation failed";
     console.warn("[VoiceNarrator]", message);
@@ -223,6 +232,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     if (typeof window === "undefined") return;
 
     const event = queueRef.current.shift()!;
+    const eventKey = getNarrationKey(event);
     setCurrentNarration(event);
     isPlayingRef.current = true;
     setIsSpeaking(true);
@@ -230,6 +240,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
     const finishAndContinue = () => {
       isPlayingRef.current = false;
       setIsSpeaking(false);
+      recentNarrationKeysRef.current.set(eventKey, Date.now());
       if (audioUrlRef.current) {
         URL.revokeObjectURL(audioUrlRef.current);
         audioUrlRef.current = null;
@@ -295,14 +306,30 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         notifyVoicePlaybackError(event, error);
         finishAndContinue();
       });
-  }, [muted, status, gradioVoiceReady, ensureAudioElement, notifyVoicePlaybackError]); // Uses refs for selected language/current voice sample
+  }, [muted, status, gradioVoiceReady, ensureAudioElement, notifyVoicePlaybackError, getNarrationKey]); // Uses refs for selected language/current voice sample
 
   const speak = useCallback(
     (event: Omit<NarrationEvent, "id">) => {
+      const now = Date.now();
+      const narrationKey = getNarrationKey(event);
+      for (const [key, timestamp] of recentNarrationKeysRef.current) {
+        if (now - timestamp > RECENT_NARRATION_TTL_MS) {
+          recentNarrationKeysRef.current.delete(key);
+        }
+      }
+
+      if (event.type !== "danger") {
+        const isAlreadyQueued = queueRef.current.some((queued) => getNarrationKey(queued) === narrationKey);
+        const recentTimestamp = recentNarrationKeysRef.current.get(narrationKey);
+        if (isAlreadyQueued || (recentTimestamp && now - recentTimestamp < RECENT_NARRATION_TTL_MS)) {
+          return;
+        }
+      }
+
       const narration: NarrationEvent = {
         ...event,
         id: crypto.randomUUID(),
-        spokenAt: Date.now(),
+        spokenAt: now,
       };
 
       if (event.type === "danger") {
@@ -310,6 +337,8 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         stopSpeaking();
         setTimeout(() => playNext(), 120);
       } else {
+        recentNarrationKeysRef.current.set(narrationKey, now);
+        queueRef.current = queueRef.current.slice(-Math.max(0, MAX_PENDING_NARRATIONS - 1));
         queueRef.current.push(narration);
         playNext();
       }
@@ -324,7 +353,7 @@ export function useVoiceNarrator({ muted = false, language = "es" }: UseVoiceNar
         });
       }
     },
-    [playNext, stopSpeaking]
+    [getNarrationKey, playNext, stopSpeaking]
   );
 
   const unlockSpeech = useCallback((granted: boolean) => {

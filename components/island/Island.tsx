@@ -23,7 +23,8 @@ import {
   type TravelProfile,
   type TravelStyle,
 } from "@/lib/travel-profile";
-import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle } from "lucide-react";
+import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle, History, Route, MapPin } from "lucide-react";
+import type { RouteHistoryEntry } from "@/components/map/types";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Message {
@@ -159,6 +160,9 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   const [openVoiceMenuId, setOpenVoiceMenuId] = useState<string | null>(null);
   const [voiceIdToReplace, setVoiceIdToReplace] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [profileView, setProfileView] = useState<"profile" | "history">("profile");
+  const [routeHistory, setRouteHistory] = useState<RouteHistoryEntry[]>([]);
+  const [isLoadingRouteHistory, setIsLoadingRouteHistory] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -292,6 +296,27 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       console.error(e);
     } finally {
       setIsLoadingVoices(false);
+    }
+  }, [status]);
+
+  const loadRouteHistory = useCallback(async () => {
+    setIsLoadingRouteHistory(true);
+    try {
+      const localRaw = localStorage.getItem("caliguia_route_history");
+      const localRoutes = localRaw ? JSON.parse(localRaw) : [];
+      if (Array.isArray(localRoutes)) setRouteHistory(localRoutes);
+
+      if (status === "authenticated") {
+        const res = await fetch("/api/users/me/route-history");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.routes)) setRouteHistory(data.routes);
+        }
+      }
+    } catch {
+      setRouteHistory([]);
+    } finally {
+      setIsLoadingRouteHistory(false);
     }
   }, [status]);
 
@@ -1309,7 +1334,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
 
                 {/* Login/Profile Button */}
                 <button
-                  onClick={() => setShowProfileModal(true)}
+                  onClick={() => {
+                    setProfileView("profile");
+                    setShowProfileModal(true);
+                  }}
                   title={t("travelProfile")}
                   className="w-8 h-8 overflow-hidden rounded-full bg-linear-to-tr from-blue-500 to-blue-400 flex items-center justify-center shadow-sm border border-white/20 hover:shadow-md transition-all active:scale-95"
                 >
@@ -1352,7 +1380,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     <div className="flex items-center justify-between mb-4 px-1">
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => { setShowProfileModal(true); setShowMenu(false); }}
+                          onClick={() => { setProfileView("profile"); setShowProfileModal(true); setShowMenu(false); }}
                           className="w-8 h-8 overflow-hidden rounded-full bg-linear-to-tr from-blue-500 to-blue-400 flex items-center justify-center shadow-sm border border-white/20"
                         >
                           {session?.user?.image ? (
@@ -1367,6 +1395,19 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                           )}
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileView("history");
+                          loadRouteHistory();
+                          setShowProfileModal(true);
+                          setShowMenu(false);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-zinc-600 transition-colors hover:bg-zinc-50"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        <span>Historial</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -1657,7 +1698,7 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
       {/* Profiling Modal - Outside transformed parent for perfect centering */}
       <AnimatePresence>
         {showProfileModal && (
-          <div className="fixed inset-0 z-110 flex items-start justify-center overflow-y-auto px-4 pb-6 pt-12 sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-110 flex items-center justify-center overflow-hidden p-3 sm:p-5">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1669,10 +1710,10 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden pointer-events-auto"
+              className="relative flex max-h-[calc(100dvh-24px)] w-full max-w-[min(440px,calc(100vw-24px))] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl pointer-events-auto sm:max-h-[min(760px,calc(100dvh-40px))]"
             >
-              <div className="p-6">
-                <div className="mb-5 flex items-center justify-between gap-3">
+              <div className="shrink-0 border-b border-zinc-100 bg-white/95 px-5 pb-4 pt-5 backdrop-blur sm:px-6 sm:pt-6">
+                <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100 shadow-sm">
                       {session?.user?.image ? (
@@ -1696,41 +1737,113 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isAuthenticated) {
-                        signOut();
-                      } else {
-                        signIn("google");
-                      }
-                    }}
-                    disabled={isAuthLoading}
-                    className="inline-flex shrink-0 items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-4 py-2 text-[12px] font-black text-blue-600 transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {!isAuthenticated && (
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                        <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
-                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.3 9.14 5.38 12 5.38z" />
-                      </svg>
-                    )}
-                    <span>{isAuthenticated ? t("signOut") : t("google")}</span>
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h3 className="text-xl font-black text-zinc-800">{t("profileTitle")}</h3>
-                    <p className="text-[12px] font-medium text-zinc-400">{t("profileSubtitle")}</p>
-                  </div>
-                  <button onClick={() => setShowProfileModal(false)} className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <button onClick={() => setShowProfileModal(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-400 transition-colors hover:text-zinc-600">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                   </button>
                 </div>
 
-                <div className="space-y-6">
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-xl font-black text-zinc-800">{t("profileTitle")}</h3>
+                    <p className="text-[12px] font-medium text-zinc-400">{t("profileSubtitle")}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileView(view => view === "history" ? "profile" : "history");
+                        loadRouteHistory();
+                      }}
+                      className={`inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-[12px] font-black transition-colors ${profileView === "history" ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"}`}
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      <span>Historial</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isAuthenticated) {
+                          signOut();
+                        } else {
+                          signIn("google");
+                        }
+                      }}
+                      disabled={isAuthLoading}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-4 text-[12px] font-black text-blue-600 transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {!isAuthenticated && (
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden="true">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.3 9.14 5.38 12 5.38z" />
+                        </svg>
+                      )}
+                      <span>{isAuthenticated ? t("signOut") : t("google")}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                {profileView === "history" ? (
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Rutas recorridas</p>
+                      <p className="mt-1 text-[12px] font-medium leading-snug text-zinc-500">
+                        Aqui aparecen las rutas que has creado, con su destino, paradas y duracion estimada.
+                      </p>
+                    </div>
+                    {isLoadingRouteHistory ? (
+                      <div className="space-y-2">
+                        <div className="h-20 animate-pulse rounded-2xl bg-zinc-100" />
+                        <div className="h-20 animate-pulse rounded-2xl bg-zinc-100" />
+                      </div>
+                    ) : routeHistory.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-zinc-200 px-4 py-8 text-center">
+                        <Route className="mx-auto h-6 w-6 text-zinc-300" />
+                        <p className="mt-3 text-[13px] font-black text-zinc-700">Aun no hay rutas guardadas</p>
+                        <p className="mt-1 text-[11px] font-medium text-zinc-400">Crea una ruta a un lugar o emergencia para verla aqui.</p>
+                      </div>
+                    ) : (
+                      routeHistory.map(route => (
+                        <div key={route.id} className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-[14px] font-black text-zinc-800">{route.destinationName}</p>
+                              <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                                {new Date(route.createdAt).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })}
+                              </p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${route.mode === "emergency" ? "bg-red-50 text-red-600" : route.mode === "driving" ? "bg-zinc-100 text-zinc-600" : "bg-blue-50 text-blue-600"}`}>
+                              {route.mode === "emergency" ? "Emergencia" : route.mode === "driving" ? "Auto" : "Caminando"}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {route.distanceText && <span className="rounded-full bg-zinc-50 px-2.5 py-1 text-[10px] font-bold text-zinc-500">{route.distanceText}</span>}
+                            {route.durationText && <span className="rounded-full bg-zinc-50 px-2.5 py-1 text-[10px] font-bold text-zinc-500">{route.durationText}</span>}
+                            <span className="rounded-full bg-zinc-50 px-2.5 py-1 text-[10px] font-bold text-zinc-500">{route.stops.length} paradas</span>
+                          </div>
+                          <div className="mt-3 border-l-2 border-blue-100 pl-3">
+                            {route.stops.length > 0 ? route.stops.map((stop, index) => (
+                              <div key={`${route.id}-${stop.name}-${index}`} className="relative pb-2 last:pb-0">
+                                <span className="absolute -left-[18px] top-1 h-2.5 w-2.5 rounded-full bg-blue-400 ring-2 ring-white" />
+                                <p className="text-[11px] font-bold text-zinc-700">{stop.name}</p>
+                                {stop.description && <p className="text-[9px] font-medium uppercase tracking-tight text-zinc-400">{stop.description}</p>}
+                              </div>
+                            )) : (
+                              <div className="flex items-center gap-2 text-[11px] font-bold text-zinc-500">
+                                <MapPin className="h-3.5 w-3.5" />
+                                Ruta directa al destino.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                <div className="space-y-5">
                   {/* Interests */}
                   <div>
                     <label className="mb-3 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-widest text-zinc-400">
@@ -1861,43 +1974,31 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     </div>
                   </div>
 
-                  {userProfile?.mustGo.length ? (
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 block mb-2">{t("mustGo")}</label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {userProfile.mustGo.slice(0, 7).map(place => (
-                          <span key={place} className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold text-zinc-500">
-                            {place}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Save button with status feedback */}
-                  <div className="flex flex-col gap-1.5">
-                    <button
-                      onClick={() => saveProfile(userProfile || normalizeTravelProfile({}))}
-                      disabled={!isAuthenticated || isSavingProfile}
-                      className={`w-full py-4 rounded-2xl font-bold text-[14px] shadow-lg active:scale-95 transition-all disabled:cursor-not-allowed disabled:active:scale-100 ${profileSaveStatus === "saved"
-                          ? "bg-emerald-500 text-white shadow-emerald-500/20"
-                          : profileSaveStatus === "error"
-                            ? "bg-red-500 text-white shadow-red-500/20"
-                            : "bg-blue-600 text-white shadow-blue-500/20 disabled:bg-zinc-300 disabled:shadow-none"
-                        }`}
-                    >
-                      {isSavingProfile
-                        ? t("savingPreferences")
-                        : profileSaveStatus === "saved"
-                          ? t("preferencesSaved")
-                          : profileSaveStatus === "error"
-                            ? t("preferencesError")
-                            : t("savePreferences")
-                      }
-                    </button>
-                  </div>
                 </div>
+                )}
               </div>
+              {/* Save button with status feedback */}
+              {profileView === "profile" && <div className="shrink-0 border-t border-zinc-100 bg-white/95 px-5 py-4 backdrop-blur sm:px-6">
+                <button
+                  onClick={() => saveProfile(userProfile || normalizeTravelProfile({}))}
+                  disabled={!isAuthenticated || isSavingProfile}
+                  className={`w-full rounded-2xl py-3.5 text-[14px] font-bold shadow-lg transition-all active:scale-95 disabled:cursor-not-allowed disabled:active:scale-100 ${profileSaveStatus === "saved"
+                      ? "bg-emerald-500 text-white shadow-emerald-500/20"
+                      : profileSaveStatus === "error"
+                        ? "bg-red-500 text-white shadow-red-500/20"
+                        : "bg-blue-600 text-white shadow-blue-500/20 disabled:bg-zinc-300 disabled:shadow-none"
+                    }`}
+                >
+                  {isSavingProfile
+                    ? t("savingPreferences")
+                    : profileSaveStatus === "saved"
+                      ? t("preferencesSaved")
+                      : profileSaveStatus === "error"
+                        ? t("preferencesError")
+                        : t("savePreferences")
+                  }
+                </button>
+              </div>}
             </motion.div>
           </div>
         )}

@@ -32,6 +32,38 @@ function waitForGoogleMapsBase(timeoutMs = 10000) {
     });
 }
 
+function loadGoogleMapsScript(scriptId: string, src: string, errorMessage: string) {
+    return new Promise<void>((resolve, reject) => {
+        const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
+
+        if (hasBaseGoogleMaps()) {
+            resolve();
+            return;
+        }
+
+        if (existingScript) {
+            waitForGoogleMapsBase().then(resolve).catch(reject);
+            existingScript.addEventListener("error", () => reject(new Error(errorMessage)), { once: true });
+            return;
+        }
+
+        const script = document.createElement("script");
+        script.id = scriptId;
+        script.src = src;
+        script.async = true;
+        script.defer = true;
+        script.crossOrigin = "anonymous";
+        window.__caliguiaGoogleMapsReady = () => {
+            waitForGoogleMapsBase().then(resolve).catch(reject);
+        };
+        script.onload = () => {
+            waitForGoogleMapsBase().then(resolve).catch(reject);
+        };
+        script.onerror = () => reject(new Error(errorMessage));
+        document.head.appendChild(script);
+    });
+}
+
 export async function loadGoogleMapsViaProxy() {
     if (hasBaseGoogleMaps()) return;
     if (window.__googleMapsProxyLoading) return window.__googleMapsProxyLoading;
@@ -48,47 +80,41 @@ export async function loadGoogleMapsViaProxy() {
             throw new Error("Maps internal secret not available");
         }
 
-        await new Promise<void>((resolve, reject) => {
-            const scriptId = "google-maps-proxy-script";
-            const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
-
-            if (hasBaseGoogleMaps()) {
-                resolve();
-                return;
-            }
-
-            if (existingScript) {
-                waitForGoogleMapsBase().then(resolve).catch(reject);
-                existingScript.addEventListener("error", () => reject(new Error("Failed to load Maps via proxy")), {
-                    once: true,
-                });
-                return;
-            }
-
-            const params = new URLSearchParams({
-                internal_secret: internalSecret,
-                libraries: "maps,places,visualization",
-                v: "weekly",
-                language: "es",
-                loading: "async",
-                callback: "__caliguiaGoogleMapsReady",
-            });
-
-            const script = document.createElement("script");
-            script.id = scriptId;
-            script.src = `/api/maps-proxy?${params.toString()}`;
-            script.async = true;
-            script.defer = true;
-            script.crossOrigin = "anonymous";
-            window.__caliguiaGoogleMapsReady = () => {
-                waitForGoogleMapsBase().then(resolve).catch(reject);
-            };
-            script.onload = () => {
-                waitForGoogleMapsBase().then(resolve).catch(reject);
-            };
-            script.onerror = () => reject(new Error("Failed to load Maps via proxy"));
-            document.head.appendChild(script);
+        const proxyParams = new URLSearchParams({
+            internal_secret: internalSecret,
+            libraries: "maps,places,visualization",
+            v: "weekly",
+            language: "es",
+            loading: "async",
+            callback: "__caliguiaGoogleMapsReady",
         });
+
+        try {
+            await loadGoogleMapsScript(
+                "google-maps-proxy-script",
+                `/api/maps-proxy?${proxyParams.toString()}`,
+                "Failed to load Maps via proxy"
+            );
+            return;
+        } catch (error) {
+            console.warn("[maps] Proxy load failed, trying direct Google Maps script", error);
+            document.getElementById("google-maps-proxy-script")?.remove();
+        }
+
+        const directParams = new URLSearchParams({
+            key: internalSecret,
+            libraries: "maps,places,visualization",
+            v: "weekly",
+            language: "es",
+            loading: "async",
+            callback: "__caliguiaGoogleMapsReady",
+        });
+
+        await loadGoogleMapsScript(
+            "google-maps-direct-script",
+            `https://maps.googleapis.com/maps/api/js?${directParams.toString()}`,
+            "Failed to load Maps directly"
+        );
     })().catch((error) => {
         window.__googleMapsProxyLoading = undefined;
         throw error;

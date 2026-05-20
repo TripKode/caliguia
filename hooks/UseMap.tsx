@@ -40,6 +40,7 @@ import {
     type ArZoomLevel,
     type MapContextType,
     type NarrationEvent,
+    type RouteHistoryEntry,
     RiskLevel,
     VerbosityLevel
 } from "@/components/map/types";
@@ -142,9 +143,65 @@ const BROAD_LOCAL_PLACE_TYPES = [
     "performing_arts_theater",
 ] as const;
 
+type EmergencyKind = "police" | "medical" | "veterinary";
+
+type EmergencyPlace = {
+    id: string;
+    name: string;
+    address: string;
+    lat: number;
+    lng: number;
+    label: string;
+    kind: EmergencyKind;
+    color: string;
+};
+
+const EMERGENCY_SEARCHES = [
+    { query: "CAI de policia Cali Colombia", kind: "police", label: "CAI / Policia", color: "#2563eb" },
+    { query: "centro medico Cali Colombia", kind: "medical", label: "Centro medico", color: "#dc2626" },
+    { query: "centro medico veterinario Cali Colombia", kind: "veterinary", label: "Veterinaria", color: "#16a34a" },
+] as const;
+const ROUTE_HISTORY_STORAGE_KEY = "caliguia_route_history";
+
 function getPlaceName(place: any) {
     if (typeof place.displayName === "string") return place.displayName;
     return place.displayName?.text || "Lugar cercano";
+}
+
+function escapeHtml(value: string) {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function getEmergencyIconSvg(kind: EmergencyKind, size = 14) {
+    const common = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"`;
+
+    if (kind === "police") {
+        return `<svg ${common}><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.4a1.4 1.4 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/></svg>`;
+    }
+
+    if (kind === "medical") {
+        return `<svg ${common}><path d="M8 19h8"/><path d="M12 15V7"/><path d="M8 11h8"/><path d="M6 22V5a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v17"/></svg>`;
+    }
+
+    return `<svg ${common}><circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 0-6.5 6.5 3.6 3.6 0 0 0 5 5c1.9-1.3 4.1-1.3 6 0a3.6 3.6 0 0 0 5-5A5 5 0 0 0 12 10z"/></svg>`;
+}
+
+function areLandmarkListsEqual(current: Landmark[], next: Landmark[]) {
+    if (current.length !== next.length) return false;
+    return current.every((landmark, index) => {
+        const other = next[index];
+        return (
+            landmark.place_id === other.place_id &&
+            landmark.name === other.name &&
+            landmark.lat === other.lat &&
+            landmark.lng === other.lng
+        );
+    });
 }
 
 function getPlaceTypeLabel(types: string[] = [], primaryType?: string, language: "es" | "en" | "pt" = "es") {
@@ -269,6 +326,9 @@ export function UseHome() {
     const lastFetchPos = useRef<{ lat: number; lng: number } | null>(null);
     const polygonsRef = useRef<google.maps.Polygon[]>([]);
     const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
+    const emergencyMarkersRef = useRef<google.maps.OverlayView[]>([]);
+    const emergencyLayerRequestRef = useRef(0);
+    const activeEmergencyRouteIdRef = useRef<string | null>(null);
     const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
     const routePolylineRef = useRef<google.maps.Polyline | null>(null);
     const lastZoneId = useRef<number | null>(null);
@@ -276,6 +336,8 @@ export function UseHome() {
     const lastDangerNarration = useRef<number>(0);
     const lastZoneFactNarration = useRef<number>(Date.now()); // Empezar con el tiempo actual para que no hable el dato apenas entra (choca con la bienvenida)
     const lastNarratedPos = useRef<{ lat: number; lng: number } | null>(null);
+    const coordsRef = useRef<{ lat: number; lng: number; accuracy: number } | null>(null);
+    const isMobileRef = useRef(false);
     const dragStartY = useRef<number>(0);
     const drawerStartH = useRef<number>(0);
     const isDragging = useRef(false);
@@ -301,6 +363,8 @@ export function UseHome() {
 
     const speakRef = useRef(speak);
     useEffect(() => { speakRef.current = speak; }, [speak]);
+    useEffect(() => { coordsRef.current = coords; }, [coords]);
+    useEffect(() => { isMobileRef.current = isMobile; }, [isMobile]);
 
     // ── 4. CALLBACKS ──
 
@@ -313,6 +377,29 @@ export function UseHome() {
         }
         setCurrentComuna(null);
     }, [comunas]);
+
+    const saveRouteHistory = useCallback((entry: Omit<RouteHistoryEntry, "id" | "createdAt">) => {
+        const routeEntry: RouteHistoryEntry = {
+            ...entry,
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+        };
+
+        try {
+            const raw = localStorage.getItem(ROUTE_HISTORY_STORAGE_KEY);
+            const current = raw ? JSON.parse(raw) : [];
+            const history = Array.isArray(current) ? current : [];
+            localStorage.setItem(ROUTE_HISTORY_STORAGE_KEY, JSON.stringify([routeEntry, ...history].slice(0, 50)));
+        } catch {
+            // Local history is a convenience cache; server persistence is still attempted.
+        }
+
+        fetch("/api/users/me/route-history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(routeEntry),
+        }).catch(() => null);
+    }, []);
 
     const drawRiskLayer = useCallback((map: google.maps.Map) => {
         polygonsRef.current.forEach(p => p.setMap(null));
@@ -402,14 +489,244 @@ export function UseHome() {
         });
     }, [comunas]);
 
+    const clearEmergencyLayer = useCallback(() => {
+        emergencyLayerRequestRef.current += 1;
+        emergencyMarkersRef.current.forEach(marker => marker.setMap(null));
+        emergencyMarkersRef.current = [];
+    }, []);
+
+    const clearEmergencyRoute = useCallback(() => {
+        activeEmergencyRouteIdRef.current = null;
+        if (routePolylineRef.current) {
+            routePolylineRef.current.setVisible(false);
+            routePolylineRef.current.setPath([]);
+        }
+        setActiveRouteLandmark(null);
+        setRouteInterestPoints([]);
+    }, []);
+
+    const createEmergencyRoute = useCallback((destination: EmergencyPlace) => {
+        const map = mapInstance.current;
+        if (!map) return;
+
+        const currentCoords = coordsRef.current;
+
+        if (!currentCoords) {
+            setLocationError("Activa tu ubicacion para crear una ruta hasta este punto de emergencia.");
+            map.panTo({ lat: destination.lat, lng: destination.lng });
+            map.setZoom(16);
+            return;
+        }
+
+        const service = new google.maps.DirectionsService();
+        service.route(
+            {
+                origin: { lat: currentCoords.lat, lng: currentCoords.lng },
+                destination: { lat: destination.lat, lng: destination.lng },
+                travelMode: google.maps.TravelMode.WALKING,
+                provideRouteAlternatives: false,
+            },
+            (result, routeStatus) => {
+                if (routeStatus !== google.maps.DirectionsStatus.OK || !result?.routes?.[0]) {
+                    setLocationError("No pudimos crear la ruta hacia este punto de emergencia.");
+                    return;
+                }
+
+                const route = result.routes[0];
+                const path = route.overview_path?.length
+                    ? route.overview_path
+                    : route.legs.flatMap(leg => leg.steps.flatMap(step => step.path));
+
+                if (!routePolylineRef.current) {
+                    routePolylineRef.current = new google.maps.Polyline({
+                        map,
+                        strokeColor: destination.color,
+                        strokeWeight: 6,
+                        strokeOpacity: 0.88,
+                    });
+                }
+
+                routePolylineRef.current.setOptions({
+                    map,
+                    strokeColor: destination.color,
+                    strokeWeight: 6,
+                    strokeOpacity: 0.88,
+                    visible: true,
+                });
+                routePolylineRef.current.setPath(path);
+
+                const bounds = new google.maps.LatLngBounds();
+                path.forEach(point => bounds.extend(point));
+                bounds.extend({ lat: currentCoords.lat, lng: currentCoords.lng });
+                bounds.extend({ lat: destination.lat, lng: destination.lng });
+                map.fitBounds(bounds, isMobileRef.current ? 64 : 96);
+                activeEmergencyRouteIdRef.current = destination.id;
+                setActiveRouteLandmark(destination.name);
+                setRouteInterestPoints([]);
+                saveRouteHistory({
+                    destinationName: destination.name,
+                    destinationLat: destination.lat,
+                    destinationLng: destination.lng,
+                    originLat: currentCoords.lat,
+                    originLng: currentCoords.lng,
+                    mode: "emergency",
+                    source: "emergency",
+                    stops: [],
+                    distanceText: route.legs?.[0]?.distance?.text,
+                    durationText: route.legs?.[0]?.duration?.text,
+                });
+                infoWindowRef.current?.close();
+            }
+        );
+    }, [saveRouteHistory]);
+
+    const drawEmergencyLayer = useCallback(async (map: google.maps.Map) => {
+        clearEmergencyLayer();
+        const requestId = emergencyLayerRequestRef.current;
+
+        if (!google.maps.importLibrary) return;
+
+        try {
+            const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+            const seen = new Set<string>();
+            const places: EmergencyPlace[] = [];
+
+            for (const search of EMERGENCY_SEARCHES) {
+                if (!(Place as any).searchByText) continue;
+
+                const result = await (Place as any).searchByText({
+                    textQuery: search.query,
+                    fields: ["id", "displayName", "location", "formattedAddress", "businessStatus", "types"],
+                    maxResultCount: 12,
+                    language,
+                    region: "CO",
+                    locationBias: {
+                        center: CALI_CENTER,
+                        radius: 18000,
+                    },
+                }).catch(() => null);
+
+                (result?.places || [])
+                    .filter((place: any) => place.location && getPlaceName(place))
+                    .filter((place: any) => isInsideCaliBounds(place.location.lat(), place.location.lng()))
+                    .forEach((place: any) => {
+                        const id = place.id || `${getPlaceName(place)}-${place.location.lat()}-${place.location.lng()}`;
+                        if (seen.has(id)) return;
+                        seen.add(id);
+                        places.push({
+                            id,
+                            name: getPlaceName(place),
+                            address: place.formattedAddress || "Direccion no disponible",
+                            lat: place.location.lat(),
+                            lng: place.location.lng(),
+                            label: search.label,
+                            kind: search.kind,
+                            color: search.color,
+                        });
+                    });
+            }
+
+            if (requestId !== emergencyLayerRequestRef.current) return;
+
+            class EmergencyOverlay extends google.maps.OverlayView {
+                private div: HTMLButtonElement | null = null;
+
+                constructor(
+                    private place: EmergencyPlace,
+                    private targetMap: google.maps.Map,
+                    private onOpen: (place: EmergencyPlace) => void
+                ) {
+                    super();
+                    this.setMap(targetMap);
+                }
+
+                onAdd() {
+                    this.div = document.createElement("button");
+                    this.div.type = "button";
+                    this.div.style.position = "absolute";
+                    this.div.style.zIndex = "996";
+                    this.div.style.cursor = "pointer";
+                    this.div.style.border = "0";
+                    this.div.style.padding = "0";
+                    this.div.style.background = "transparent";
+                    this.div.style.transform = "translate(-50%, -100%)";
+                    this.div.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px 4px 4px;border-radius:999px;background:white;border:2px solid ${this.place.color};box-shadow:0 6px 18px rgba(15,23,42,0.20);white-space:nowrap">
+                            <div style="width:24px;height:24px;border-radius:999px;background:${this.place.color};color:white;display:flex;align-items:center;justify-content:center">${getEmergencyIconSvg(this.place.kind, 14)}</div>
+                            <span style="max-width:118px;overflow:hidden;text-overflow:ellipsis;font-family:-apple-system,sans-serif;font-size:11px;font-weight:800;color:#18181b">${escapeHtml(this.place.name)}</span>
+                        </div>
+                    `;
+                    this.div.onclick = () => this.onOpen(this.place);
+                    this.getPanes()?.floatPane.appendChild(this.div);
+                }
+
+                draw() {
+                    const projection = this.getProjection();
+                    if (!projection || !this.div) return;
+                    const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.place.lat, this.place.lng));
+                    if (!point) return;
+                    this.div.style.left = `${point.x}px`;
+                    this.div.style.top = `${point.y}px`;
+                }
+
+                onRemove() {
+                    this.div?.parentNode?.removeChild(this.div);
+                    this.div = null;
+                }
+            }
+
+            emergencyMarkersRef.current = places.map(place => new EmergencyOverlay(place, map, selectedPlace => {
+                if (infoWindowRef.current) infoWindowRef.current.close();
+                const isActiveRoute = activeEmergencyRouteIdRef.current === selectedPlace.id;
+                const buttonId = `emergency-route-${selectedPlace.id.replace(/[^a-z0-9_-]/gi, "")}`;
+                const iw = new google.maps.InfoWindow({
+                    zIndex: 100000,
+                    content: `
+                        <div style="position:relative;z-index:100000;font-family:-apple-system,sans-serif;padding:8px 2px 2px;min-width:210px">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                                <span style="width:28px;height:28px;border-radius:999px;background:${selectedPlace.color};color:white;display:flex;align-items:center;justify-content:center">${getEmergencyIconSvg(selectedPlace.kind, 15)}</span>
+                                <span style="font-size:10px;font-weight:900;color:${selectedPlace.color};text-transform:uppercase;letter-spacing:0.06em">${escapeHtml(selectedPlace.label)}</span>
+                            </div>
+                            <div style="font-size:14px;font-weight:900;color:#18181b;line-height:1.15;margin-bottom:6px">${escapeHtml(selectedPlace.name)}</div>
+                            <div style="font-size:11px;color:#52525b;line-height:1.35">${escapeHtml(selectedPlace.address)}</div>
+                            <button id="${buttonId}" type="button" style="margin-top:10px;width:100%;height:34px;border:0;border-radius:999px;background:${isActiveRoute ? "#18181b" : selectedPlace.color};color:white;font-family:-apple-system,sans-serif;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;box-shadow:0 8px 18px rgba(15,23,42,0.18)">${isActiveRoute ? "Cancelar ruta" : "Crear ruta"}</button>
+                        </div>
+                    `,
+                    position: { lat: selectedPlace.lat, lng: selectedPlace.lng },
+                });
+                iw.addListener("domready", () => {
+                    const button = document.getElementById(buttonId);
+                    button?.addEventListener("click", () => {
+                        if (activeEmergencyRouteIdRef.current === selectedPlace.id) {
+                            clearEmergencyRoute();
+                            infoWindowRef.current?.close();
+                            return;
+                        }
+                        createEmergencyRoute(selectedPlace);
+                    }, { once: true });
+                    const infoWindows = document.querySelectorAll(".gm-style-iw, .gm-style-iw-c, .gm-style-iw-t");
+                    infoWindows.forEach(element => {
+                        if (element instanceof HTMLElement) element.style.zIndex = "100000";
+                    });
+                });
+                iw.open(map);
+                infoWindowRef.current = iw;
+            }));
+        } catch (error) {
+            console.warn("[places] Emergency layer search failed.", error);
+        }
+    }, [clearEmergencyLayer, clearEmergencyRoute, createEmergencyRoute, language]);
+
     const applyLayer = useCallback((mode: LayerMode, map: google.maps.Map) => {
         polygonsRef.current.forEach(p => p.setMap(null));
         polygonsRef.current = [];
         if (heatmapRef.current) { heatmapRef.current.setMap(null); heatmapRef.current = null; }
+        clearEmergencyLayer();
 
         if (mode === "risk") drawRiskLayer(map);
         else if (mode === "heatmap") drawHeatmapLayer(map);
-    }, [drawRiskLayer, drawHeatmapLayer]);
+        else if (mode === "emergency") void drawEmergencyLayer(map);
+    }, [drawRiskLayer, drawHeatmapLayer, drawEmergencyLayer, clearEmergencyLayer]);
 
     const selectComuna = useCallback((comuna: ComunaData) => {
         if (!mapInstance.current) return;
@@ -591,16 +908,16 @@ export function UseHome() {
                         radiusM: 200,
                         place_id: place.id,
                         images: getPlacePhotos(place),
-                        prompt: `Háblale al usuario sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Usa únicamente contexto local y sé breve.`,
+                        prompt: `Crea un guion hablado, fluido y completo sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Incluye contexto local, un detalle cultural o visual y una invitación a observar el lugar. Entre 45 y 75 palabras.`,
                     };
                 });
 
-            setLocalLandmarks(newLandmarks);
+            setLocalLandmarks(current => areLandmarkListsEqual(current, newLandmarks) ? current : newLandmarks);
         } catch {
             console.warn("[places] Landmark search failed.");
-            setLocalLandmarks([]);
+            setLocalLandmarks(current => current.length === 0 ? current : []);
         } finally {
-            setLoadingLandmarks(false);
+            setLoadingLandmarks(current => current ? false : current);
         }
     }, [language]);
 
@@ -744,12 +1061,22 @@ export function UseHome() {
 
     const handlePosition = useCallback(async (position: GeolocationPosition) => {
         requestingLocationRef.current = false;
-        setLocationError(null);
-        setLocationDebug(null);
+        setLocationError(current => current === null ? current : null);
+        setLocationDebug(current => current === null ? current : null);
         const { latitude: lat, longitude: lng, accuracy } = position.coords;
         writeCachedLocation({ lat, lng, accuracy });
-        setCoords({ lat, lng, accuracy });
-        setStatus("tracking");
+        setCoords(current => {
+            if (
+                current &&
+                Math.abs(current.lat - lat) < 0.000001 &&
+                Math.abs(current.lng - lng) < 0.000001 &&
+                Math.abs(current.accuracy - accuracy) < 1
+            ) {
+                return current;
+            }
+            return { lat, lng, accuracy };
+        });
+        setStatus(current => current === "tracking" ? current : "tracking");
 
         if (!mapInstance.current) {
             try {
@@ -969,7 +1296,7 @@ export function UseHome() {
                 sessionStorage.setItem("caliguia_last_welcome_lng", lng.toString());
 
                 const nearbyNames = localLandmarks.slice(0, 3).map(l => l.name).join(", ");
-                const prompt = `El turista acaba de abrir la app y se encuentra en Cali. Está muy cerca de: ${nearbyNames || "lugares icónicos"}. Dale una bienvenida muy cálida y suelta un dato MUY curioso o atractivo sobre esta zona específica para motivarlo a explorar. Máximo 40 palabras.`;
+                const prompt = `El turista acaba de abrir la app y se encuentra en Cali. Está muy cerca de: ${nearbyNames || "lugares icónicos"}. Crea un guion hablado cálido, fluido y completo para motivarlo a explorar. Incluye un dato curioso o atractivo de la zona. Entre 45 y 70 palabras.`;
 
                 fetchNarration(prompt, "welcome", language).then(text => {
                     if (text) speakRef.current({ type: "welcome", text, title: "Explorando Cali", icon: "🌺" });
@@ -1002,7 +1329,7 @@ export function UseHome() {
 
             if (now - lastZoneFactNarration.current > intervalMs) {
                 lastZoneFactNarration.current = now;
-                const promptFact = `El usuario se encuentra paseando por ${currentComuna.name}. Cuéntale un dato cultural muy curioso, histórico corto o recomiéndale un "parche" (plan/evento típico) cerca de esta zona. Máximo 40 palabras, tono caleño amigable.`;
+                const promptFact = `El usuario se encuentra paseando por ${currentComuna.name}. Crea un guion hablado fluido con un dato cultural curioso, una pincelada histórica o un "parche" cercano. Debe sonar natural, completo y caleño. Entre 45 y 70 palabras.`;
                 fetchNarration(promptFact, "info", language).then(text => {
                     if (text) speakRef.current({ type: "info", text, title: `💡 ${currentComuna.name}`, icon: "💡" });
                 }).catch(() => null);
@@ -1057,6 +1384,7 @@ export function UseHome() {
         setActiveRouteLandmark,
         routeInterestPoints,
         setRouteInterestPoints,
+        saveRouteHistory,
         speak
     };
 }

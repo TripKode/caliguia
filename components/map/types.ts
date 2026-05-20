@@ -1,5 +1,5 @@
 export type Status = "idle" | "loading" | "tracking" | "denied" | "error";
-export type LayerMode = "risk" | "heatmap" | "none";
+export type LayerMode = "risk" | "heatmap" | "emergency" | "none";
 export type ActiveTab = "local" | "places" | "zones" | "experience";
 export type RiskLevel = "low" | "medium" | "high" | "safe";
 export type ArZoomLevel = 1 | 2 | 4;
@@ -48,6 +48,28 @@ export interface NarrationEvent {
     title?: string;
     icon?: string;
     spokenAt?: number;
+}
+
+export interface RouteHistoryStop {
+    name: string;
+    lat?: number;
+    lng?: number;
+    description?: string;
+}
+
+export interface RouteHistoryEntry {
+    id: string;
+    destinationName: string;
+    destinationLat?: number;
+    destinationLng?: number;
+    originLat?: number;
+    originLng?: number;
+    mode: "walking" | "driving" | "emergency";
+    source: "panel" | "map" | "emergency";
+    stops: RouteHistoryStop[];
+    distanceText?: string;
+    durationText?: string;
+    createdAt: string;
 }
 
 export interface MapContextType {
@@ -117,6 +139,7 @@ export interface MapContextType {
     setActiveRouteLandmark: (name: string | null) => void;
     routeInterestPoints: any[];
     setRouteInterestPoints: (points: any[]) => void;
+    saveRouteHistory: (entry: Omit<RouteHistoryEntry, "id" | "createdAt">) => void;
 }
 
 export interface CaliEvent {

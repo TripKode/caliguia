@@ -187,11 +187,15 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
       window.clearTimeout(initialTimeoutRef.current);
       initialTimeoutRef.current = null;
     }
-    setVisionState((prev) => ({
-      ...prev,
-      isAnalyzing: false,
-      statusText: "Apunta la cámara hacia un lugar icónico.",
-    }));
+    setVisionState((prev) => {
+      const nextStatusText = "Apunta la cámara hacia un lugar icónico.";
+      if (!prev.isAnalyzing && prev.statusText === nextStatusText) return prev;
+      return {
+        ...prev,
+        isAnalyzing: false,
+        statusText: nextStatusText,
+      };
+    });
   }, []);
 
   const captureAndAnalyze = useCallback(async (

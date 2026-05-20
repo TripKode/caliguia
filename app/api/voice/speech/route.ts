@@ -7,7 +7,18 @@ import { downloadVoiceSample } from "@/lib/voice-storage";
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const MAX_TTS_CHARS = 1000;
 const TARGET_TTS_CHARS = 900;
+const RECENT_TTS_TTL_MS = 90_000;
 const SUPPORTED_LANGUAGES = new Set(["es", "en", "pt"]);
+
+type SpeechResult = {
+  audio: ArrayBuffer;
+  contentType: string;
+  duration: number;
+};
+
+const inFlightTts = new Map<string, Promise<SpeechResult>>();
+const recentTts = new Map<string, { expiresAt: number; result: SpeechResult }>();
+let workerQueue: Promise<void> = Promise.resolve();
 
 function isAudioFile(file: File) {
   return file.type.startsWith("audio/");
@@ -58,6 +69,36 @@ const OFFICIAL_VOICE_TEXTS = {
   "system:jorge": OFFICIAL_VOICE_REFERENCE_TEXT,
   "system:ovidio": OFFICIAL_VOICE_REFERENCE_TEXT,
 };
+
+function getOfficialVoiceReferenceText(voiceId?: string | null) {
+  if (!voiceId?.startsWith("system:")) return undefined;
+  return OFFICIAL_VOICE_TEXTS[voiceId as keyof typeof OFFICIAL_VOICE_TEXTS] || OFFICIAL_VOICE_REFERENCE_TEXT;
+}
+
+function getRecentTts(cacheKey: string) {
+  const cached = recentTts.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    recentTts.delete(cacheKey);
+    return null;
+  }
+  return cached.result;
+}
+
+async function runWorkerTtsExclusive<T>(task: () => Promise<T>) {
+  const previous = workerQueue;
+  let release!: () => void;
+  workerQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
 
 async function getSavedVoiceSample(activeProviderVoiceId: string | null): Promise<SavedVoiceSample | null> {
   if (!activeProviderVoiceId) return null;
@@ -158,32 +199,84 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
     }
 
-    console.log(`[voice/speech] Using speaker file: ${speakerFileName}, size: ${speakerFile.size} bytes`);
-
-    const speech = await createLocalXttsSpeech({
-      file: speakerFile,
-      fileName: speakerFileName,
-      voiceId,
-      text: ttsText,
-      language: voiceLanguage,
-      reference_text: savedReferenceText || (voiceId && OFFICIAL_VOICE_TEXTS[voiceId as keyof typeof OFFICIAL_VOICE_TEXTS]) || reference_text,
-    });
-
-    if (!speech.ok) {
-      const errorMsg = await speech.text().catch(() => "Unknown error");
-      console.error(`[voice/speech] Worker failed with status ${speech.status}: ${errorMsg}`);
-      return NextResponse.json({ error: "TTS Worker failed", details: errorMsg }, { status: 502 });
+    if (voiceId?.startsWith("xtts-local:") && !savedReferenceText) {
+      console.warn(`[voice/speech] User voice ${voiceId} has no stored referenceText; refusing unsafe F5 synthesis`);
+      return NextResponse.json(
+        {
+          error: "Voice reference text missing",
+          code: "VOICE_REFERENCE_TEXT_MISSING",
+          message: "Esta voz fue grabada antes de la validación nueva. Vuelve a grabarla para que F5-TTS pueda alinear audio y texto correctamente.",
+        },
+        { status: 409 }
+      );
     }
 
-    const audio = await speech.arrayBuffer();
-    const duration = (Date.now() - startTime) / 1000;
-    const contentType = speech.headers.get("content-type") ?? "audio/wav";
-    console.log(`[voice/speech] TTS completed in ${duration.toFixed(2)}s. Received ${audio.byteLength} bytes of ${contentType}`);
+    console.log(`[voice/speech] Using speaker file: ${speakerFileName}, size: ${speakerFile.size} bytes`);
 
-    return new NextResponse(audio, {
+    const resolvedReferenceText = savedReferenceText || getOfficialVoiceReferenceText(voiceId) || reference_text;
+    if (voiceId?.startsWith("system:") && resolvedReferenceText !== OFFICIAL_VOICE_REFERENCE_TEXT) {
+      console.warn(`[voice/speech] System voice ${voiceId} is not using the official reference text`);
+    }
+
+    const cacheKey = [
+      voiceId || "unknown",
+      voiceLanguage,
+      speakerFileName || "speaker",
+      ttsText,
+      resolvedReferenceText,
+    ].join("|");
+    const recent = getRecentTts(cacheKey);
+
+    let result: SpeechResult;
+    if (recent) {
+      result = recent;
+      console.log(`[voice/speech] Reusing recent TTS result for duplicated text. bytes=${result.audio.byteLength}`);
+    } else {
+      let pending = inFlightTts.get(cacheKey);
+      if (pending) {
+        console.log(`[voice/speech] Awaiting in-flight duplicate TTS for text: "${ttsText.slice(0, 50)}..."`);
+      } else {
+        pending = (async () => {
+          const speech = await runWorkerTtsExclusive(() => {
+            console.log(`[voice/speech] Sending queued TTS to worker: chars=${ttsText.length}, voiceId=${voiceId}`);
+            return createLocalXttsSpeech({
+              file: speakerFile,
+              fileName: speakerFileName,
+              voiceId,
+              text: ttsText,
+              language: voiceLanguage,
+              reference_text: resolvedReferenceText,
+            });
+          });
+
+          if (!speech.ok) {
+            const errorMsg = await speech.text().catch(() => "Unknown error");
+            console.error(`[voice/speech] Worker failed with status ${speech.status}: ${errorMsg}`);
+            throw new Error(errorMsg || "TTS Worker failed");
+          }
+
+          const audio = await speech.arrayBuffer();
+          const duration = (Date.now() - startTime) / 1000;
+          const contentType = speech.headers.get("content-type") ?? "audio/wav";
+          return { audio, contentType, duration };
+        })();
+        inFlightTts.set(cacheKey, pending);
+        pending.finally(() => inFlightTts.delete(cacheKey)).catch(() => undefined);
+      }
+
+      result = await pending;
+      recentTts.set(cacheKey, {
+        expiresAt: Date.now() + RECENT_TTS_TTL_MS,
+        result,
+      });
+    }
+
+    console.log(`[voice/speech] TTS completed in ${result.duration.toFixed(2)}s. Received ${result.audio.byteLength} bytes of ${result.contentType}`);
+
+    return new NextResponse(result.audio.slice(0), {
       status: 200,
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": result.contentType,
         "Cache-Control": "no-store",
         "X-Voice-Provider": "xtts-local",
       },

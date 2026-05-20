@@ -110,6 +110,7 @@ export function Panel() {
         activeRouteLandmark,
         setRouteInterestPoints,
         routeInterestPoints,
+        saveRouteHistory,
         speak,
         selectComuna,
     } = useMap();
@@ -317,6 +318,27 @@ export function Panel() {
 
                     setActiveRouteLandmark(landmark.name);
                     setRouteInterestPoints(interestPoints);
+                    saveRouteHistory({
+                        destinationName: landmark.name,
+                        destinationLat: landmark.lat,
+                        destinationLng: landmark.lng,
+                        originLat: coords.lat,
+                        originLng: coords.lng,
+                        mode: "walking",
+                        source: "panel",
+                        stops: interestPoints.map(point => ({
+                            name: point.name,
+                            lat: point.lat,
+                            lng: point.lng,
+                            description: point.description || point.type || "Lugar de interes",
+                        })),
+                        distanceText: result.routes[0].legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0)
+                            ? `${(result.routes[0].legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0) / 1000).toFixed(1)} km`
+                            : result.routes[0].legs[0]?.distance?.text,
+                        durationText: result.routes[0].legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0)
+                            ? `${Math.round(result.routes[0].legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0) / 60)} min`
+                            : result.routes[0].legs[0]?.duration?.text,
+                    });
 
                     if (speak) {
                         speak({ type: "info", text: `Ruta trazada. Toca los íconos azules para ver qué hay en tu camino.`, title: "Destino: " + landmark.name, icon: "🏁" });

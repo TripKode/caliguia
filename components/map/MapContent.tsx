@@ -215,7 +215,7 @@ function buildExternalLandmarkFromPlace(place: any, language: "es" | "en" | "pt"
         radiusM: 200,
         place_id: place.id || place.place_id,
         images: getGooglePlacePhotos(place),
-        prompt: `Háblale al usuario sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Usa contexto local y sé breve.`,
+        prompt: `Crea un guion hablado, fluido y completo sobre ${name}, un ${typeLabel.toLowerCase()} cercano en Santiago de Cali. Incluye contexto local, un detalle cultural o visual y una invitación a observar el lugar. Entre 45 y 75 palabras.`,
     };
 }
 
@@ -225,6 +225,11 @@ function needsAiPlaceDescription(history?: string) {
     if (clean.length < 120) return true;
     if (/^CR\s|^Cl\.|^Calle\s|^Carrera\s/i.test(clean)) return true;
     return !/[a-záéíóúñ]{4,}.*[.].*[a-záéíóúñ]{4,}/i.test(clean);
+}
+
+function isGenericPlaceDescription(description?: string) {
+    if (!description) return true;
+    return /^(museo|parque|patrimonio religioso|atracción local|arte y cultura|sitio histórico|centro cultural|teatro|lugar cercano)$/i.test(description.trim());
 }
 
 function MapContent() {
@@ -277,6 +282,7 @@ function MapContent() {
         routeInterestPoints,
         setRouteInterestPoints,
         places,
+        saveRouteHistory,
         toggle3D
     } = useMap();
 
@@ -288,6 +294,7 @@ function MapContent() {
     const [routePins, setRoutePins] = useState<any[]>([]);
     const [externalLandmark, setExternalLandmark] = useState<any | null>(null);
     const routeMarkersRef = useRef<any[]>([]);
+    const greetedLandmarksRef = useRef(new Set<string>());
 
     const findLandmarkByName = (name: string) => {
         const localMatch = localLandmarks.find(l => hasUsefulNameOverlap(l.name, name));
@@ -310,7 +317,7 @@ function MapContent() {
             radiusM: 200,
             place_id: placeMatch.place_id,
             images: [],
-            prompt: `Háblale al usuario sobre ${placeMatch.name}, un lugar cercano en Santiago de Cali. Sé breve, amable y útil.`,
+            prompt: `Crea un guion hablado, fluido y útil sobre ${placeMatch.name}, un lugar cercano en Santiago de Cali. Incluye qué puede observar el usuario, por qué vale la pena detenerse y una invitación amable a explorar. Entre 45 y 75 palabras.`,
         };
     };
 
@@ -660,6 +667,27 @@ function MapContent() {
                     routeMarkersRef.current.push(dest);
                     setActiveRouteLandmark(landmark.name);
                     setRouteInterestPoints(interestPoints);
+                    saveRouteHistory({
+                        destinationName: landmark.name,
+                        destinationLat: landmark.lat,
+                        destinationLng: landmark.lng,
+                        originLat: coords.lat,
+                        originLng: coords.lng,
+                        mode: userProfile.style === "relajado" ? "driving" : "walking",
+                        source: "map",
+                        stops: interestPoints.map(point => ({
+                            name: point.name,
+                            lat: point.lat,
+                            lng: point.lng,
+                            description: point.description || point.type || "Lugar de interes",
+                        })),
+                        distanceText: result.routes[0].legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0)
+                            ? `${(result.routes[0].legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0) / 1000).toFixed(1)} km`
+                            : result.routes[0].legs[0]?.distance?.text,
+                        durationText: result.routes[0].legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0)
+                            ? `${Math.round(result.routes[0].legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0) / 60)} min`
+                            : result.routes[0].legs[0]?.duration?.text,
+                    });
 
                     if (speak) {
                         const routeNarrationByLang: Record<string, string> = {
@@ -729,17 +757,25 @@ function MapContent() {
                 setConversation(initialMessages);
 
                 // Greeting logic: if NO previous messages, say hi with landmark info
-                if (initialMessages.length === 0 && speak) {
+                if (initialMessages.length === 0 && speak && !greetedLandmarksRef.current.has(expandedLandmark)) {
                     const landmark = externalLandmark?.name === expandedLandmark
                         ? externalLandmark
                         : localLandmarks.find(l => l.name === expandedLandmark);
                     if (landmark) {
-                        speak({ 
-                            type: "info", 
-                            text: landmark.description, 
-                            title: expandedLandmark, 
-                            icon: "🏛️" 
-                        });
+                        greetedLandmarksRef.current.add(expandedLandmark);
+                        const prompt = isGenericPlaceDescription(landmark.description)
+                            ? landmark.prompt
+                            : `Convierte este dato sobre ${landmark.name} en un guion hablado fluido para un visitante en Cali: ${landmark.description}`;
+                        fetchNarration(prompt, "monument", language).then(text => {
+                            if (text) {
+                                speak({
+                                    type: "info",
+                                    text,
+                                    title: expandedLandmark,
+                                    icon: "🏛️",
+                                });
+                            }
+                        }).catch(() => null);
                     }
                 }
             };
@@ -997,7 +1033,7 @@ function MapContent() {
                 {/* Floating Layer Toggles - Visible even with drawer open */}
                 {experienceMode !== "ar" && (
                     <div className="absolute right-4 top-20 z-20 flex items-center gap-1 rounded-full bg-white/80 p-0.5 backdrop-blur-md border border-black/5 shadow-lg shadow-black/5 md:left-1/2 md:-translate-x-1/2 md:right-auto md:p-1">
-                        {(["risk", "heatmap", "none"] as LayerMode[]).map(mode => (
+                        {(["risk", "heatmap", "emergency", "none"] as LayerMode[]).map(mode => (
                             <motion.button
                                 key={mode}
                                 onClick={() => setLayerMode(mode)}
@@ -1007,7 +1043,7 @@ function MapContent() {
                                     : "text-zinc-500 hover:bg-black/5"
                                     }`}
                             >
-                                {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : "Oculto"}
+                                {mode === "risk" ? "Comunas" : mode === "heatmap" ? "Heatmap" : mode === "emergency" ? "Emergencias" : "Oculto"}
                             </motion.button>
                         ))}
                         <div className="w-px h-3 bg-black/10 mx-1" />
