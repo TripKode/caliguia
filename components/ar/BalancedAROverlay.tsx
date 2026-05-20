@@ -218,7 +218,7 @@ export function BalancedAROverlay({ userCoords, points, language = "es" }: Balan
       })}
 
       {offscreenDirection && (
-        <div className="absolute bottom-[16%] left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-cyan-300/40 bg-black/65 px-4 py-2 text-[12px] font-black text-cyan-100 shadow-lg backdrop-blur-md">
+        <div className="absolute bottom-[16%] left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-cyan-300/40 bg-black/65 px-4 py-2 text-[10px] whitespace-nowrap font-black text-cyan-100 shadow-lg backdrop-blur-md">
           <span className="text-lg leading-none">{offscreenDirection === "left" ? "<" : ">"}</span>
           {copy.lookForGuide}
         </div>

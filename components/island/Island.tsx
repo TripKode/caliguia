@@ -23,7 +23,7 @@ import {
   type TravelProfile,
   type TravelStyle,
 } from "@/lib/travel-profile";
-import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, BadgeCheck, Plus, AlertTriangle, History, Route, MapPin } from "lucide-react";
+import { Play, Mic, Trash2, MoreVertical, Check, RefreshCw, ChevronLeft, ChevronRight, BadgeCheck, Plus, AlertTriangle, History, Route, MapPin } from "lucide-react";
 import type { RouteHistoryEntry } from "@/components/map/types";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -1400,22 +1400,6 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                             </svg>
                           )}
                         </button>
-                      </div>
-                      {isAuthenticated && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProfileView("history");
-                            loadRouteHistory();
-                            setShowProfileModal(true);
-                            setShowMenu(false);
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-zinc-600 transition-colors hover:bg-zinc-50"
-                        >
-                          <History className="h-3.5 w-3.5" />
-                          <span>Historial</span>
-                        </button>
-                      )}
                       <button
                         type="button"
                         onClick={() => {
@@ -1441,6 +1425,24 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                       </button>
                     </div>
                     <div className="h-px bg-black/5 mx-[-12px] mb-4" />
+                    {isAuthenticated && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileView("history");
+                          loadRouteHistory();
+                          setShowProfileModal(true);
+                          setShowMenu(false);
+                        }}
+                        className="mb-2 flex w-full items-center justify-between rounded-xl border border-black/[0.07] bg-zinc-50 px-3 py-2 text-left transition-colors text-zinc-700 hover:bg-zinc-100"
+                      >
+                        <span className="text-[12px] font-semibold flex items-center gap-2">
+                          <History className="h-4 w-4 text-zinc-500" />
+                          <span>Historial</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-zinc-400" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => { toggleExperienceMode(); setShowMenu(false); }}
