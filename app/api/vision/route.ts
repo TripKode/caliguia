@@ -10,7 +10,8 @@ const DEFAULT_CALI_LANDMARKS = [
   "Cristo Rey", "Cerro de las Tres Cruces", "Iglesia La Ermita", "Gato de Tejada",
   "Bulevar del Río", "Plaza de Caicedo", "Teatro Municipal Enrique Buenaventura",
   "Museo La Tertulia", "Parque del Perro", "San Antonio", "Zoológico de Cali",
-  "Estadio Pascual Guerrero", "Centro Cultural de Cali", "Catedral de San Pedro",
+  "Estadio Pascual Guerrero", "Estadio Olímpico Pascual Guerrero", "Estadio Deportivo Cali",
+  "Palmaseca", "Coliseo Evangelista Mora", "Centro Cultural de Cali", "Catedral de San Pedro",
   "Iglesia de San Francisco", "Museo Arqueológico La Merced", "Torre de Cali",
   "Avenida Roosevelt", "Plaza de Toros de Cañaveralejo", "Puente Ortiz",
   "Palacio Nacional de Cali", "Casa Proartes", "Parque Panamericano",
@@ -28,6 +29,33 @@ function normalizeLanguage(language: unknown): "es" | "en" | "pt" {
 
 function cleanLandmarkName(value: unknown) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+}
+
+function normalizePlaceName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(el|la|los|las|del|de|parque|plaza|monumento|museo|iglesia|estadio|olimpico)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function snapLandmarkName(value: string | null, landmarkNames: string[]) {
+  if (!value) return null;
+  const normalized = normalizePlaceName(value);
+  if (!normalized) return value;
+
+  const exact = landmarkNames.find(name => normalizePlaceName(name) === normalized);
+  if (exact) return exact;
+
+  const partial = landmarkNames.find(name => {
+    const candidate = normalizePlaceName(name);
+    return candidate && (candidate.includes(normalized) || normalized.includes(candidate));
+  });
+
+  return partial || value;
 }
 
 function buildSystemPrompt(params: {
@@ -57,21 +85,22 @@ Lugares permitidos para reconocer en esta vista: ${landmarkList}.
 
 REGLAS ESTRICTAS:
 1. Solo puedes reconocer lugares de la lista permitida. No inventes nombres.
-2. Si reconoces claramente uno de esos lugares, responde SOLO JSON válido con:
+2. Prioriza los lugares más cercanos al usuario y los nombres que aparezcan primero en la lista. Si ves letras, placas, arquitectura distintiva, escudos, graderías o fachadas de estadio, úsalo como evidencia visual fuerte.
+3. Si reconoces claramente uno de esos lugares, responde SOLO JSON válido con:
 {"recognized":true,"landmarkName":"Nombre exacto de la lista","text":"Descripción cultural breve, fascinante y hablable, máximo 45 palabras."}
-3. Si la imagen es ambigua, genérica, interior, persona, objeto, calle sin sitio identificable, o no coincide claramente con la lista, responde SOLO:
+4. Si la imagen es ambigua, genérica, interior, persona, objeto, calle sin sitio identificable, o no coincide claramente con la lista, responde SOLO:
 {"recognized":false,"landmarkName":null,"text":"${NO_RECOGNITION[params.language]}"}
-4. ${languageRules[params.language]}
-5. Sin markdown, sin emojis, sin listas, sin texto fuera del JSON.`;
+5. ${languageRules[params.language]}
+6. Sin markdown, sin emojis, sin listas, sin texto fuera del JSON.`;
 }
 
-function parseVisionContent(content: string, language: "es" | "en" | "pt") {
+function parseVisionContent(content: string, language: "es" | "en" | "pt", landmarkNames: string[]) {
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]);
       const recognized = Boolean(parsed.recognized);
-      const landmarkName = cleanLandmarkName(parsed.landmarkName);
+      const landmarkName = snapLandmarkName(cleanLandmarkName(parsed.landmarkName), landmarkNames);
       const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
       return {
         recognized: recognized && Boolean(landmarkName) && Boolean(text),
@@ -92,7 +121,7 @@ function parseVisionContent(content: string, language: "es" | "en" | "pt") {
 
   return {
     recognized: !isNotRecognized,
-    landmarkName: !isNotRecognized ? cleanLandmarkName(content.split(/[,.]/)[0]) : null,
+    landmarkName: !isNotRecognized ? snapLandmarkName(cleanLandmarkName(content.split(/[,.]/)[0]), landmarkNames) : null,
     text: isNotRecognized ? NO_RECOGNITION[language] : content.trim(),
   };
 }
@@ -118,14 +147,17 @@ export async function POST(req: NextRequest) {
     image: string;
     language?: string;
     coords?: { lat?: number; lng?: number; accuracy?: number } | null;
-    landmarks?: Array<{ name?: string }>;
+    landmarks?: Array<{ name?: string; lat?: number; lng?: number; description?: string }>;
     currentComuna?: { name?: string } | string | null;
   };
   const language = normalizeLanguage(rawLanguage);
   const dynamicLandmarks = Array.isArray(landmarks)
-    ? landmarks.map(item => cleanLandmarkName(item?.name)).filter(Boolean).slice(0, 18)
+    ? landmarks
+      .map(item => cleanLandmarkName(item?.name))
+      .filter(Boolean)
+      .slice(0, 24)
     : [];
-  const landmarkNames = Array.from(new Set([...dynamicLandmarks, ...DEFAULT_CALI_LANDMARKS])).slice(0, 35);
+  const landmarkNames = Array.from(new Set([...dynamicLandmarks, ...DEFAULT_CALI_LANDMARKS])).slice(0, 42);
   const currentComunaName = typeof currentComuna === "string" ? currentComuna : currentComuna?.name;
   const systemPrompt = buildSystemPrompt({
     language,
@@ -171,7 +203,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty response from Groq" }, { status: 502 });
     }
 
-    const parsed = parseVisionContent(text, language);
+    const parsed = parseVisionContent(text, language, landmarkNames);
 
     return NextResponse.json({
       text: parsed.text,

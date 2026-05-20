@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -64,6 +64,84 @@ function getEventStatus(event: CaliEvent, todayKey = getBogotaDateKey()) {
     return "active";
 }
 
+const PLACE_FILTERS = [
+    {
+        id: "all",
+        label: { es: "Todo", en: "All", pt: "Tudo" },
+        types: [],
+    },
+    {
+        id: "bar",
+        label: { es: "Bar", en: "Bar", pt: "Bar" },
+        types: ["bar", "night_club"],
+    },
+    {
+        id: "food",
+        label: { es: "Comida", en: "Food", pt: "Comida" },
+        types: ["restaurant", "food", "meal_takeaway", "bakery"],
+    },
+    {
+        id: "cafe",
+        label: { es: "Café", en: "Cafe", pt: "Café" },
+        types: ["cafe"],
+    },
+    {
+        id: "clothes",
+        label: { es: "Ropa", en: "Clothing", pt: "Roupas" },
+        types: ["clothing_store", "shoe_store"],
+    },
+    {
+        id: "shopping",
+        label: { es: "Compras", en: "Shopping", pt: "Compras" },
+        types: ["shopping_mall", "store"],
+    },
+    {
+        id: "culture",
+        label: { es: "Cultura", en: "Culture", pt: "Cultura" },
+        types: ["museum", "art_gallery", "tourist_attraction"],
+    },
+    {
+        id: "beauty",
+        label: { es: "Belleza", en: "Beauty", pt: "Beleza" },
+        types: ["beauty_salon", "hair_care", "spa"],
+    },
+    {
+        id: "health",
+        label: { es: "Salud", en: "Health", pt: "Saúde" },
+        types: ["pharmacy", "drugstore", "doctor", "hospital"],
+    },
+] as const;
+
+let caliSportsEventsCache: CaliEvent[] | null = null;
+let caliSportsEventsPromise: Promise<CaliEvent[]> | null = null;
+let caliSportsEventsErrorLogged = false;
+
+function loadCaliSportsEvents() {
+    if (caliSportsEventsCache) return Promise.resolve(caliSportsEventsCache);
+    if (caliSportsEventsPromise) return caliSportsEventsPromise;
+
+    caliSportsEventsPromise = fetch("/api/sports/cali-football")
+        .then(res => res.ok ? res.json() : { events: [] })
+        .then(data => {
+            const events = Array.isArray(data?.events) ? data.events as CaliEvent[] : [];
+            caliSportsEventsCache = events;
+            return events;
+        })
+        .catch(error => {
+            if (!caliSportsEventsErrorLogged) {
+                console.warn("[sports] Could not load Cali sports fixtures.", error);
+                caliSportsEventsErrorLogged = true;
+            }
+            caliSportsEventsCache = [];
+            return [];
+        })
+        .finally(() => {
+            caliSportsEventsPromise = null;
+        });
+
+    return caliSportsEventsPromise;
+}
+
 export function Panel() {
     const t = useTranslations("Panel");
     const { language } = useExperience();
@@ -84,6 +162,10 @@ export function Panel() {
     const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
     const [selectedHotel, setSelectedHotel] = useState<any | null>(null);
     const [selectedEvent, setSelectedEvent] = useState<CaliEvent | null>(null);
+    const [activePlaceFilter, setActivePlaceFilter] = useState<(typeof PLACE_FILTERS)[number]["id"]>("all");
+    const [footballEvents, setFootballEvents] = useState<CaliEvent[]>([]);
+    const [loadingFootballEvents, setLoadingFootballEvents] = useState(false);
+    const [hasLoadedSportsEvents, setHasLoadedSportsEvents] = useState(false);
     const {
         activeTab,
         setActiveTab,
@@ -115,9 +197,18 @@ export function Panel() {
         selectComuna,
     } = useMap();
 
+    const selectedPlaceFilter = PLACE_FILTERS.find(filter => filter.id === activePlaceFilter) || PLACE_FILTERS[0];
+    const filteredPlaces = useMemo(() => {
+        if (selectedPlaceFilter.id === "all") return places;
+        return places.filter(place => {
+            const placeTypes = Array.isArray(place.types) ? place.types : [];
+            return selectedPlaceFilter.types.some(type => placeTypes.includes(type));
+        });
+    }, [places, selectedPlaceFilter]);
+
     useEffect(() => {
         setCurrentPage(1);
-    }, [places]);
+    }, [places, activePlaceFilter]);
 
     useEffect(() => {
         setLocalPage(1);
@@ -137,6 +228,18 @@ export function Panel() {
                 .finally(() => setLoadingHotels(false));
         }
     }, [activeTab, currentComuna]);
+
+    useEffect(() => {
+        if (activeTab !== "sports" || hasLoadedSportsEvents || loadingFootballEvents) return;
+
+        setLoadingFootballEvents(true);
+        loadCaliSportsEvents()
+            .then(events => setFootballEvents(events))
+            .finally(() => {
+                setHasLoadedSportsEvents(true);
+                setLoadingFootballEvents(false);
+            });
+    }, [activeTab, hasLoadedSportsEvents, loadingFootballEvents]);
 
     const generateRoute = async (landmark: any, shuffle = false) => {
         if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
@@ -355,7 +458,7 @@ export function Panel() {
         <div className="flex flex-col h-full overflow-hidden">
             {/* Tabs + voice mute */}
             <div className="flex items-center gap-1 px-4 pt-2 pb-0 shrink-0">
-                {(["local", "places", "zones", "experience"] as const).map(tab => (
+                {(["local", "places", "zones", "experience", "sports"] as const).map(tab => (
                     <motion.button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
@@ -364,7 +467,7 @@ export function Panel() {
                             }`}
                     >
                         <span className="truncate">
-                            {tab === "local" ? t("local") : tab === "places" ? t("places") : tab === "zones" ? t("zones") : t("agenda")}
+                            {tab === "local" ? t("local") : tab === "places" ? t("places") : tab === "zones" ? t("zones") : tab === "sports" ? t("sports") : t("agenda")}
                         </span>
                         {tab === "experience" && experienceLog.length > 0 && (
                             <span className="shrink-0 inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-500 text-white text-[7px] font-black">
@@ -615,7 +718,7 @@ export function Panel() {
                             <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("nearby")}</p>
                                 <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
-                                    {loadingPlaces ? t("searching") : t("businessCount", { count: places.length })}
+                                    {loadingPlaces ? t("searching") : t("businessCount", { count: filteredPlaces.length })}
                                 </p>
                             </div>
                             {coords && (
@@ -636,6 +739,28 @@ export function Panel() {
 
                         {isPlacesExpanded && (
                             <>
+                                <div className="shrink-0 border-b border-black/5 px-5 py-2">
+                                    <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 [-ms-overflow-style:none] [scrollbar-width:none] md:[-ms-overflow-style:auto] md:[scrollbar-width:thin] [&::-webkit-scrollbar]:hidden md:[&::-webkit-scrollbar]:block md:[&::-webkit-scrollbar]:h-1.5 md:[&::-webkit-scrollbar-thumb]:rounded-full md:[&::-webkit-scrollbar-thumb]:bg-zinc-300 md:[&::-webkit-scrollbar-track]:bg-transparent">
+                                        {PLACE_FILTERS.map(filter => {
+                                            const active = activePlaceFilter === filter.id;
+                                            return (
+                                                <button
+                                                    key={filter.id}
+                                                    type="button"
+                                                    onClick={() => setActivePlaceFilter(filter.id)}
+                                                    className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-black transition-all active:scale-95 ${
+                                                        active
+                                                            ? "border-blue-600 bg-blue-600 text-white shadow-sm shadow-blue-500/20"
+                                                            : "border-zinc-200 bg-white text-zinc-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
+                                                    }`}
+                                                >
+                                                    {filter.label[language]}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
                                 {loadingPlaces && places.length === 0 && (
                                     <div className="flex flex-col gap-3 px-5 py-4 shrink-0">
                                         {[1, 2, 3].map(i => (
@@ -658,13 +783,13 @@ export function Panel() {
 
                                 {(!loadingPlaces || places.length > 0) && (
                                     <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-2">
-                                        {places.length === 0 && (
+                                        {filteredPlaces.length === 0 && (
                                             <div className="text-[12px] text-zinc-400 text-center py-12 px-6">
                                                 {status === "tracking" ? t("noBusinesses") : status === "loading" ? t("findingLocation") : t("shareLocationForPlaces")}
                                             </div>
                                         )}
                                         <motion.div className="flex flex-col gap-1" layout>
-                                            {places.slice((currentPage - 1) * 20, currentPage * 20).map((place) => {
+                                            {filteredPlaces.slice((currentPage - 1) * 20, currentPage * 20).map((place) => {
                                                 const dist = coords
                                                     ? Math.round(haversineDistance(coords.lat, coords.lng, place.geometry.location.lat(), place.geometry.location.lng()))
                                                     : null;
@@ -713,7 +838,7 @@ export function Panel() {
                                             })}
                                         </motion.div>
 
-                                        {places.length > 20 && (
+                                        {filteredPlaces.length > 20 && (
                                             <div className="flex items-center justify-between px-2 py-4 mt-2 border-t border-black/5 bg-white/50 sticky bottom-0">
                                                 <button
                                                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -724,11 +849,11 @@ export function Panel() {
                                                 </button>
                                                 <div className="text-center">
                                                     <p className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter">{t("page")}</p>
-                                                    <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(places.length / 20)}</p>
+                                                    <p className="text-[13px] font-black text-blue-600 leading-none mt-0.5">{currentPage} / {Math.ceil(filteredPlaces.length / 20)}</p>
                                                 </div>
                                                 <button
-                                                    onClick={() => setCurrentPage(p => Math.min(Math.ceil(places.length / 20), p + 1))}
-                                                    disabled={currentPage === Math.ceil(places.length / 20)}
+                                                    onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredPlaces.length / 20), p + 1))}
+                                                    disabled={currentPage === Math.ceil(filteredPlaces.length / 20)}
                                                     className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 disabled:opacity-30 active:scale-95 transition-all"
                                                 >
                                                     <ChevronRight className="w-4 h-4" />
@@ -906,6 +1031,106 @@ export function Panel() {
                                     })}
                                 </div>
                             </div>
+                        </div>
+                    </motion.div>
+                )}
+
+                {activeTab === "sports" && (
+                    <motion.div
+                        key="sports"
+                        className="flex h-full min-h-0 flex-col overflow-hidden"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                    >
+                        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-black/5 shrink-0">
+                            <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">{t("sportsCali")}</p>
+                                <p className="text-[14px] font-semibold text-zinc-800 mt-0.5">
+                                    {loadingFootballEvents ? t("searching") : t("sportsMatchCount", { count: footballEvents.length })}
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[9px] font-medium uppercase tracking-[0.07em] text-zinc-400">{t("date")}</p>
+                                <p className="text-[12px] font-semibold text-zinc-800 mt-0.5">
+                                    {agendaDate}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
+                            {loadingFootballEvents && footballEvents.length === 0 && (
+                                <div className="flex flex-col gap-3 py-2">
+                                    {[1, 2, 3].map(i => (
+                                        <div key={`sports-sk-${i}`} className="flex gap-3 items-center rounded-2xl bg-white p-3.5 border border-black/5 animate-pulse">
+                                            <div className="w-10 h-10 rounded-xl bg-zinc-100 shrink-0" />
+                                            <div className="flex flex-col gap-1.5 flex-1">
+                                                <div className="h-3 bg-zinc-100 rounded-full w-2/3" />
+                                                <div className="h-2.5 bg-zinc-100 rounded-full w-1/2" />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {!loadingFootballEvents && footballEvents.length === 0 && (
+                                <div className="flex h-full min-h-60 flex-col items-center justify-center px-8 text-center">
+                                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/8 text-blue-600">
+                                        <Flag className="h-7 w-7" />
+                                    </div>
+                                    <p className="text-[15px] font-black text-zinc-800">{t("noSportsMatchesTitle")}</p>
+                                    <p className="mt-2 text-[12px] font-medium leading-relaxed text-zinc-400">{t("noSportsMatchesBody")}</p>
+                                </div>
+                            )}
+
+                            {footballEvents.length > 0 && (
+                                <div className="flex flex-col gap-2">
+                                    {footballEvents.map((event, idx) => {
+                                        const eventStatus = getEventStatus(event);
+                                        return (
+                                            <motion.div
+                                                key={event.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: idx * 0.04 }}
+                                                onClick={() => setSelectedEvent(event)}
+                                                className="group bg-white rounded-2xl border border-black/5 p-3.5 shadow-sm hover:shadow-md hover:border-blue-500/20 transition-all cursor-pointer"
+                                            >
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-blue-500/5 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                                                        <Flag className="w-5 h-5 text-blue-500" />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                                        <div className="flex min-w-0 items-center justify-between gap-2">
+                                                            <span className="max-w-[118px] truncate whitespace-nowrap text-[8px] font-black text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full uppercase tracking-tighter sm:max-w-[150px]">
+                                                                {event.category}
+                                                            </span>
+                                                            <div className="flex shrink-0 items-center gap-1.5">
+                                                                {eventStatus === "active" && (
+                                                                    <span className="text-[8px] font-black uppercase tracking-tighter text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">
+                                                                        Hoy
+                                                                    </span>
+                                                                )}
+                                                                <span className="text-[10px] font-bold text-zinc-400">{event.time}</span>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-[14px] font-black text-zinc-800 leading-tight">{event.title}</p>
+                                                        <div className="flex items-center gap-1 mt-0.5">
+                                                            <span className="text-[10px] font-bold text-zinc-400">Liga:</span>
+                                                            <span className="text-[10px] font-bold text-zinc-600 truncate">{event.organizer}</span>
+                                                        </div>
+                                                        <div className="flex items-start gap-1 mt-1 text-zinc-500">
+                                                            <MapPin className="h-3 w-3 shrink-0 mt-0.5" />
+                                                            <span className="text-[10px] font-medium leading-tight">{event.location}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </motion.div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     </motion.div>
                 )}

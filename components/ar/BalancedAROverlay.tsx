@@ -183,6 +183,7 @@ export function BalancedAROverlay({ userCoords, points, language = "es" }: Balan
       {rendered.map((point) => {
         if (!point.isVisible) return null;
         const isBot = point.kind === "bot";
+        if (isBot) return null;
         const isDestination = point.kind === "destination";
         const color = isDestination ? "#10b981" : isBot ? "#3b82f6" : "#22d3ee";
         const label = isBot ? copy.guide : isDestination ? copy.destination : point.name;

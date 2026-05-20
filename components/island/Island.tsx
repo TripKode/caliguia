@@ -192,6 +192,12 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
   }, [status]);
 
   useEffect(() => {
+    if (status !== "authenticated" && profileView === "history") {
+      setProfileView("profile");
+    }
+  }, [profileView, status]);
+
+  useEffect(() => {
     sessionPreferencesRef.current = {
       preferredLanguage: session?.preferredLanguage,
       languageConfigured: session?.languageConfigured,
@@ -1395,19 +1401,21 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                           )}
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileView("history");
-                          loadRouteHistory();
-                          setShowProfileModal(true);
-                          setShowMenu(false);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-zinc-600 transition-colors hover:bg-zinc-50"
-                      >
-                        <History className="h-3.5 w-3.5" />
-                        <span>Historial</span>
-                      </button>
+                      {isAuthenticated && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileView("history");
+                            loadRouteHistory();
+                            setShowProfileModal(true);
+                            setShowMenu(false);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-zinc-600 transition-colors hover:bg-zinc-50"
+                        >
+                          <History className="h-3.5 w-3.5" />
+                          <span>Historial</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => {
@@ -1748,17 +1756,19 @@ export function AIFloatingIsland({ context, isMuted: externalMuted, onToggleMute
                     <p className="text-[12px] font-medium text-zinc-400">{t("profileSubtitle")}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileView(view => view === "history" ? "profile" : "history");
-                        loadRouteHistory();
-                      }}
-                      className={`inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-[12px] font-black transition-colors ${profileView === "history" ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"}`}
-                    >
-                      <History className="h-3.5 w-3.5" />
-                      <span>Historial</span>
-                    </button>
+                    {isAuthenticated && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileView(view => view === "history" ? "profile" : "history");
+                          loadRouteHistory();
+                        }}
+                        className={`inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-[12px] font-black transition-colors ${profileView === "history" ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"}`}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        <span>Historial</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {

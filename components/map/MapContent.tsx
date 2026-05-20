@@ -9,7 +9,7 @@ import { BalancedAROverlay, type BalancedARPoint } from "@/components/ar/Balance
 import { AIFloatingIsland } from "@/components/island/Island";
 import { useMap } from "@/hooks/UseMap";
 import { Panel } from "@/components/profile/Panel";
-import { type LayerMode } from "@/components/map/types";
+import { type CaliEvent, type LayerMode } from "@/components/map/types";
 import { useARVision } from "@/hooks/useARVision";
 import { useExperience } from "@/components/providers/ExperienceProvider";
 import { fetchNarration } from "@/components/providers/VoiceNarrator";
@@ -69,6 +69,64 @@ const TOUR_START_MESSAGES = {
     ],
 } as const;
 
+const AR_DETECTION_COPY = {
+    es: {
+        active: "Escaneo activo",
+        paused: "AR pausado",
+        detected: "Lugar detectado",
+        lastPlace: "Ultimo lugar",
+        scanAgain: "Escanear otra vez",
+        matchesToday: "Partidos hoy",
+        loadingMatches: "Buscando partidos de hoy...",
+        noMatchesToday: "No hay partidos hoy en este estadio.",
+    },
+    en: {
+        active: "Scan active",
+        paused: "AR paused",
+        detected: "Place detected",
+        lastPlace: "Last place",
+        scanAgain: "Scan again",
+        matchesToday: "Matches today",
+        loadingMatches: "Looking for today's matches...",
+        noMatchesToday: "No matches today at this stadium.",
+    },
+    pt: {
+        active: "Escaneamento ativo",
+        paused: "AR pausado",
+        detected: "Lugar detectado",
+        lastPlace: "Ultimo lugar",
+        scanAgain: "Escanear de novo",
+        matchesToday: "Jogos hoje",
+        loadingMatches: "Buscando jogos de hoje...",
+        noMatchesToday: "Não há jogos hoje neste estádio.",
+    },
+} as const;
+
+let arSportsEventsCache: CaliEvent[] | null = null;
+let arSportsEventsPromise: Promise<CaliEvent[]> | null = null;
+
+function loadARSportsEvents() {
+    if (arSportsEventsCache) return Promise.resolve(arSportsEventsCache);
+    if (arSportsEventsPromise) return arSportsEventsPromise;
+
+    arSportsEventsPromise = fetch("/api/sports/cali-football")
+        .then(res => res.ok ? res.json() : { events: [] })
+        .then(data => {
+            const events = Array.isArray(data?.events) ? data.events as CaliEvent[] : [];
+            arSportsEventsCache = events;
+            return events;
+        })
+        .catch(() => {
+            arSportsEventsCache = [];
+            return [];
+        })
+        .finally(() => {
+            arSportsEventsPromise = null;
+        });
+
+    return arSportsEventsPromise;
+}
+
 function getDailyTourStartMessage(language: keyof typeof TOUR_START_MESSAGES) {
     const todayKey = new Date().toISOString().slice(0, 10);
     const daySeed = todayKey.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
@@ -105,6 +163,20 @@ function normalizePlaceName(name: string) {
         .trim();
 }
 
+function getApproxDistanceMeters(a: { lat: number; lng: number }, b: { lat?: number; lng?: number }) {
+    if (typeof b.lat !== "number" || typeof b.lng !== "number") return Number.POSITIVE_INFINITY;
+    const radius = 6371000;
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return radius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 function hasUsefulNameOverlap(a: string, b: string) {
     const left = normalizePlaceName(a);
     const right = normalizePlaceName(b);
@@ -117,6 +189,33 @@ function hasUsefulNameOverlap(a: string, b: string) {
 
     const matches = rightTokens.filter(token => leftTokens.has(token)).length;
     return matches >= Math.min(2, rightTokens.length);
+}
+
+function getBogotaDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        timeZone: "America/Bogota",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isLikelySportsVenueName(name: string) {
+    const normalized = normalizePlaceName(name);
+    return /\b(estadio|pascual|guerrero|deportivo cali|palmaseca|coliseo)\b/.test(normalized);
+}
+
+function sportsEventMatchesPlace(event: CaliEvent, placeName: string) {
+    const place = normalizePlaceName(placeName);
+    const location = normalizePlaceName(event.location);
+    if (!place || !location) return false;
+    if (hasUsefulNameOverlap(place, location)) return true;
+    if (place.includes("pascual") && location.includes("pascual")) return true;
+    if (place.includes("guerrero") && location.includes("guerrero")) return true;
+    if (place.includes("deportivo cali") && (location.includes("deportivo cali") || location.includes("palmaseca"))) return true;
+    return false;
 }
 
 const PLACE_DETAIL_FIELDS = [
@@ -817,27 +916,42 @@ function MapContent() {
         lastLandmarkName: arLastLandmarkName,
     } = useARVision(webcamRef as React.RefObject<any>);
     const tourStartMessage = useMemo(() => getDailyTourStartMessage(language), [language]);
+    const arCopy = AR_DETECTION_COPY[language] ?? AR_DETECTION_COPY.es;
     const [isARScanning, setIsARScanning] = useState(false);
+    const [arFrozenFrame, setArFrozenFrame] = useState<string | null>(null);
+    const [arDetectedPlace, setArDetectedPlace] = useState<{ name: string; text: string } | null>(null);
+    const [arVenueMatches, setArVenueMatches] = useState<CaliEvent[]>([]);
+    const [arVenueMatchesLoading, setArVenueMatchesLoading] = useState(false);
     const isAuthenticated = authStatus === "authenticated";
-    const arVisionContext = useMemo(() => ({
-        language,
-        coords,
-        currentComuna: currentComuna ? { name: currentComuna.name, risk: currentComuna.risk } : null,
-        landmarks: [
-            ...localLandmarks.slice(0, 10).map(landmark => ({
+    const arVisionContext = useMemo(() => {
+        const landmarkCandidates = [
+            ...localLandmarks.map(landmark => ({
                 name: landmark.name,
                 lat: landmark.lat,
                 lng: landmark.lng,
                 description: landmark.description,
             })),
-            ...places.slice(0, 8).map(place => ({
+            ...places.map(place => ({
                 name: place.name,
                 lat: place.geometry.location.lat(),
                 lng: place.geometry.location.lng(),
                 description: Array.isArray(place.types) ? place.types.slice(0, 3).join(", ") : "",
             })),
-        ],
-    }), [language, coords, currentComuna, localLandmarks, places]);
+        ]
+            .filter(item => item.name)
+            .sort((a, b) => {
+                if (!coords) return 0;
+                return getApproxDistanceMeters(coords, a) - getApproxDistanceMeters(coords, b);
+            })
+            .slice(0, 24);
+
+        return {
+            language,
+            coords,
+            currentComuna: currentComuna ? { name: currentComuna.name, risk: currentComuna.risk } : null,
+            landmarks: landmarkCandidates,
+        };
+    }, [language, coords, currentComuna, localLandmarks, places]);
     const arHudPoints = useMemo<BalancedARPoint[]>(() => {
         if (!coords) return [];
 
@@ -879,15 +993,23 @@ function MapContent() {
             }));
     }, [activeRouteLandmark, coords, externalLandmark, localLandmarks, routeInterestPoints]);
 
+    const resetARDetection = () => {
+        setArFrozenFrame(null);
+        setArDetectedPlace(null);
+        setArVenueMatches([]);
+        setArVenueMatchesLoading(false);
+        setIsARScanning(false);
+    };
+
     useEffect(() => {
-        if (experienceMode === "ar" && isReady) {
+        if (experienceMode === "ar" && isReady && !arDetectedPlace) {
             startAnalysis(arVisionContext, async ({ text: detectedText, landmarkName }) => {
-                // D. Conectar con VoiceNarrator real (no window.speechSynthesis crudo)
-                // Activar ondas de la AIFloatingIsland
+                const frame = webcamRef.current?.getScreenshot?.() || null;
+                if (frame) setArFrozenFrame(frame);
+                setArDetectedPlace({ name: landmarkName, text: detectedText });
+                stopAnalysis();
                 setIsARScanning(true);
                 try {
-                    // El texto ya viene de /api/vision con el geofencing de Cali
-                    // Lo pasamos por /api/narrate para darle el tono caleño de CaliGuía
                     const response = await fetch("/api/narrate", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -920,7 +1042,44 @@ function MapContent() {
             stopAnalysis();
             setIsARScanning(false);
         };
-    }, [experienceMode, isReady, startAnalysis, stopAnalysis, speak, language, arVisionContext]);
+    }, [experienceMode, isReady, startAnalysis, stopAnalysis, speak, language, arVisionContext, arDetectedPlace, webcamRef]);
+
+    useEffect(() => {
+        if (experienceMode !== "ar") {
+            setArFrozenFrame(null);
+            setArDetectedPlace(null);
+            setArVenueMatches([]);
+            setArVenueMatchesLoading(false);
+        }
+    }, [experienceMode]);
+
+    useEffect(() => {
+        if (!arDetectedPlace || !isLikelySportsVenueName(arDetectedPlace.name)) {
+            setArVenueMatches([]);
+            setArVenueMatchesLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setArVenueMatchesLoading(true);
+        loadARSportsEvents()
+            .then(events => {
+                if (cancelled) return;
+                const today = getBogotaDateKey();
+                setArVenueMatches(
+                    events.filter(event =>
+                        event.startDate === today && sportsEventMatchesPlace(event, arDetectedPlace.name)
+                    )
+                );
+            })
+            .finally(() => {
+                if (!cancelled) setArVenueMatchesLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [arDetectedPlace]);
 
     return (
         <div className="relative w-full h-dvh overflow-hidden bg-[#f7f6f3] font-sans flex">
@@ -953,6 +1112,16 @@ function MapContent() {
                                 onUserMediaError={() => setArCameraError("No pudimos acceder a la cámara. Revisa permisos del navegador.")}
                                 className="h-full w-full object-cover"
                             />
+                            {arFrozenFrame && (
+                                <motion.img
+                                    src={arFrozenFrame}
+                                    alt=""
+                                    className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    transition={{ duration: 0.18 }}
+                                />
+                            )}
                             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0,rgba(0,0,0,0.10)_58%,rgba(0,0,0,0.34)_100%)]" />
                             <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-linear-to-b from-black/30 to-transparent" />
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-linear-to-t from-black/35 to-transparent" />
@@ -965,22 +1134,88 @@ function MapContent() {
                                 AR
                             </div>
                             <div className="pointer-events-none absolute left-4 right-4 top-40 md:left-6 md:right-auto md:max-w-sm">
-                                <div className="rounded-2xl border border-white/20 bg-black/35 px-4 py-3 text-white shadow-lg shadow-black/20 backdrop-blur-md">
+                                <motion.div
+                                    layout
+                                    className={`rounded-2xl border px-4 py-3 text-white shadow-lg shadow-black/20 backdrop-blur-md ${arDetectedPlace ? "pointer-events-auto border-emerald-300/35 bg-black/55" : "border-white/20 bg-black/35"}`}
+                                >
                                     <div className="flex items-center gap-2">
-                                        <span className={`h-2.5 w-2.5 rounded-full ${isAnalyzing ? "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.18)]" : "bg-zinc-400"}`} />
+                                        <span className={`h-2.5 w-2.5 rounded-full ${arDetectedPlace ? "bg-emerald-300 shadow-[0_0_0_4px_rgba(110,231,183,0.20)]" : isAnalyzing ? "bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.18)]" : "bg-zinc-400"}`} />
                                         <span className="text-[10px] font-black uppercase tracking-[0.12em] text-white/70">
-                                            {isAnalyzing ? "Escaneo activo" : "AR pausado"}
+                                            {arDetectedPlace ? arCopy.detected : isAnalyzing ? arCopy.active : arCopy.paused}
                                         </span>
                                     </div>
-                                    <p className="mt-1.5 text-[13px] font-semibold leading-snug text-white/92">
-                                        {arVisionStatusText}
-                                    </p>
-                                    {arLastLandmarkName && (
-                                        <p className="mt-1 text-[11px] font-medium text-white/60">
-                                            Ultimo lugar: {arLastLandmarkName}
-                                        </p>
+                                    {arDetectedPlace ? (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 8 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ duration: 0.22 }}
+                                        >
+                                            <h3 className="mt-2 text-[18px] font-black leading-tight text-white">
+                                                {arDetectedPlace.name}
+                                            </h3>
+                                            <p className="mt-2 text-[13px] font-semibold leading-relaxed text-white/88">
+                                                {arDetectedPlace.text}
+                                            </p>
+                                            {(arVenueMatchesLoading || arVenueMatches.length > 0 || isLikelySportsVenueName(arDetectedPlace.name)) && (
+                                                <div className="mt-4 border-t border-white/12 pt-3">
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-100/80">
+                                                            {arCopy.matchesToday}
+                                                        </p>
+                                                        {arVenueMatchesLoading && (
+                                                            <span className="text-[10px] font-bold text-white/50">{arCopy.loadingMatches}</span>
+                                                        )}
+                                                    </div>
+                                                    {!arVenueMatchesLoading && arVenueMatches.length === 0 && (
+                                                        <p className="mt-2 text-[11px] font-semibold leading-snug text-white/55">
+                                                            {arCopy.noMatchesToday}
+                                                        </p>
+                                                    )}
+                                                    {arVenueMatches.length > 0 && (
+                                                        <div className="mt-2 flex flex-col gap-2">
+                                                            {arVenueMatches.map(match => (
+                                                                <div key={match.id} className="rounded-xl border border-white/12 bg-white/10 px-3 py-2">
+                                                                    <div className="flex items-start justify-between gap-2">
+                                                                        <p className="min-w-0 flex-1 text-[12px] font-black leading-tight text-white">
+                                                                            {match.title}
+                                                                        </p>
+                                                                        <span className="shrink-0 rounded-full bg-emerald-300/18 px-2 py-0.5 text-[9px] font-black text-emerald-100">
+                                                                            {match.time}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p className="mt-1 truncate text-[10px] font-semibold text-white/55">
+                                                                        {match.organizer}
+                                                                    </p>
+                                                                    <p className="mt-0.5 truncate text-[10px] font-semibold text-white/45">
+                                                                        {match.location}
+                                                                    </p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={resetARDetection}
+                                                className="mt-4 rounded-full border border-white/15 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-950 shadow-sm transition-transform active:scale-95"
+                                            >
+                                                {arCopy.scanAgain}
+                                            </button>
+                                        </motion.div>
+                                    ) : (
+                                        <>
+                                            <p className="mt-1.5 text-[13px] font-semibold leading-snug text-white/92">
+                                                {arVisionStatusText}
+                                            </p>
+                                            {arLastLandmarkName && (
+                                                <p className="mt-1 text-[11px] font-medium text-white/60">
+                                                    {arCopy.lastPlace}: {arLastLandmarkName}
+                                                </p>
+                                            )}
+                                        </>
                                     )}
-                                </div>
+                                </motion.div>
                             </div>
                             <div className="absolute right-4 top-24 flex items-center gap-2 md:right-6">
                                 <button

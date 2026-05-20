@@ -24,6 +24,10 @@ interface VisionApiResult {
   text?: string;
 }
 
+const MAX_FRAME_WIDTH = 960;
+const MAX_FRAME_HEIGHT = 720;
+const ANALYSIS_INTERVAL_MS = 6500;
+
 // react-webcam exposes the inner <video> element at .video
 function getVideoElement(webcamRef: React.RefObject<Webcam | null>): HTMLVideoElement | null {
   const webcam = webcamRef.current;
@@ -75,9 +79,13 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
     const canvas = canvasRef.current;
     if (!video || !canvas) return null;
 
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    if (!w || !h) return null;
+    const sourceW = video.videoWidth;
+    const sourceH = video.videoHeight;
+    if (!sourceW || !sourceH) return null;
+
+    const scale = Math.min(1, MAX_FRAME_WIDTH / sourceW, MAX_FRAME_HEIGHT / sourceH);
+    const w = Math.max(1, Math.round(sourceW * scale));
+    const h = Math.max(1, Math.round(sourceH * scale));
 
     canvas.width = w;
     canvas.height = h;
@@ -86,7 +94,7 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
     if (!ctx) return null;
 
     ctx.drawImage(video, 0, 0, w, h);
-    return canvas.toDataURL("image/jpeg", 0.6); // 60% quality — fast & light enough for vision API
+    return canvas.toDataURL("image/jpeg", 0.68);
   }, [webcamRef]);
 
   const processVisionAPI = useCallback(async (
@@ -172,8 +180,8 @@ export function useARVision(webcamRef: React.RefObject<Webcam | null>) {
       };
 
       if (initialTimeoutRef.current) window.clearTimeout(initialTimeoutRef.current);
-      initialTimeoutRef.current = window.setTimeout(analyzeOnce, 450);
-      intervalRef.current = setInterval(analyzeOnce, 10000); // <= 6 requests/min.
+      initialTimeoutRef.current = window.setTimeout(analyzeOnce, 300);
+      intervalRef.current = setInterval(analyzeOnce, ANALYSIS_INTERVAL_MS);
     },
     [captureFrameEfficiently, processVisionAPI]
   );
