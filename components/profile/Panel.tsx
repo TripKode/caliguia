@@ -29,7 +29,13 @@ import {
     Circle,
     RefreshCw,
     X,
-    ExternalLink
+    ExternalLink,
+    Bus,
+    Car,
+    Info,
+    Coins,
+    ChevronDown,
+    ChevronUp
 } from "lucide-react";
 import { getCategoryIcon, getCategoryLabel } from "@/components/map/category";
 import {
@@ -159,6 +165,16 @@ export function Panel() {
     const [loadingHotels, setLoadingHotels] = useState(false);
     const [hotelsPage, setHotelsPage] = useState(1);
     const [isItineraryExpanded, setIsItineraryExpanded] = useState(true);
+    const [isTransportExpanded, setIsTransportExpanded] = useState(true);
+    const [routeDistanceMeters, setRouteDistanceMeters] = useState<number>(0);
+    const [hasTaxiNightSurcharge, setHasTaxiNightSurcharge] = useState(() => {
+        const now = new Date();
+        const hours = now.getHours();
+        const day = now.getDay(); // 0 is Sunday
+        return hours >= 19 || hours < 6 || day === 0;
+    });
+    const [transitSteps, setTransitSteps] = useState<any[]>([]);
+    const [transitLoading, setTransitLoading] = useState(false);
     const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
     const [selectedHotel, setSelectedHotel] = useState<any | null>(null);
     const [selectedEvent, setSelectedEvent] = useState<CaliEvent | null>(null);
@@ -241,12 +257,48 @@ export function Panel() {
             });
     }, [activeTab, hasLoadedSportsEvents, loadingFootballEvents]);
 
+    // Fetch Google Maps TRANSIT directions for active route (Umbría/Pance)
+    useEffect(() => {
+        if (!activeRouteLandmark || !coords) {
+            setTransitSteps([]);
+            return;
+        }
+        const lName = activeRouteLandmark.toLowerCase();
+        const isUmbria = lName.includes("umbría") || lName.includes("umbria") ||
+            lName.includes("buenaventura") || lName.includes("maestro") || lName.includes("lago");
+        if (!isUmbria) { setTransitSteps([]); return; }
+
+        if (typeof google === "undefined" || !google.maps?.DirectionsService) return;
+
+        setTransitLoading(true);
+        const svc = new google.maps.DirectionsService();
+        // USB Pance campus — Lago de San Buenaventura
+        const dest = { lat: 3.3523, lng: -76.5655 };
+        svc.route(
+            {
+                origin: { lat: coords.lat, lng: coords.lng },
+                destination: dest,
+                travelMode: google.maps.TravelMode.TRANSIT,
+            },
+            (result, status) => {
+                setTransitLoading(false);
+                if (status === "OK" && result) {
+                    const steps = result.routes[0]?.legs[0]?.steps ?? [];
+                    setTransitSteps(steps.filter((s: any) => s.travel_mode === "TRANSIT" || s.transit));
+                } else {
+                    setTransitSteps([]);
+                }
+            }
+        );
+    }, [activeRouteLandmark, coords]);
+
     const generateRoute = async (landmark: any, shuffle = false) => {
         if (!coords || !mapInstance.current || !google.maps.importLibrary) return;
 
         // Clear existing before showing new
         setActiveRouteLandmark(null);
         setRouteInterestPoints([]);
+        setRouteDistanceMeters(0);
         window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
         if (routePolylineRef.current) {
             routePolylineRef.current.setVisible(false);
@@ -351,13 +403,19 @@ export function Panel() {
         const minLng = Math.min(coords.lng, landmark.lng) - padding;
         const maxLng = Math.max(coords.lng, landmark.lng) + padding;
 
-        let relevantLandmarks = localLandmarks.filter(l => {
+        const boxLandmarks = localLandmarks.filter(l => {
             const inBox = l.lat >= minLat && l.lat <= maxLat && l.lng >= minLng && l.lng <= maxLng;
-            if (!inBox || l.name.toLowerCase() === landmark.name.toLowerCase()) return false;
+            return inBox && l.name.toLowerCase() !== landmark.name.toLowerCase();
+        });
+
+        const matching = boxLandmarks.filter(l => {
             const n = l.name.toLowerCase();
             const d = (l.description || "").toLowerCase();
             return matchesTourismInterest(`${n} ${d} ${l.history || ""} ${l.type || ""}`, userProfile.interests);
         });
+
+        const nonMatching = boxLandmarks.filter(l => !matching.includes(l));
+        let relevantLandmarks = [...matching, ...nonMatching];
 
         if (shuffle) {
             // Priorizar lugares que NO estaban en la ruta anterior
@@ -419,6 +477,8 @@ export function Panel() {
                     // Añadir pin de DESTINO (Burbuja verde)
                     new DestinationOverlay({ lat: landmark.lat, lng: landmark.lng }, mapInstance.current!);
 
+                    const totalDistance = result.routes[0].legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0);
+                    setRouteDistanceMeters(totalDistance);
                     setActiveRouteLandmark(landmark.name);
                     setRouteInterestPoints(interestPoints);
                     saveRouteHistory({
@@ -508,77 +568,422 @@ export function Panel() {
                             </div>
                         </div>
 
-                        {activeRouteLandmark && routeInterestPoints.length > 0 && (
-                            <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: "auto", opacity: 1 }}
-                                className={`px-5 ${isItineraryExpanded ? "py-4" : "py-2.5"} bg-zinc-50 border-b border-black/5 shrink-0 overflow-hidden`}
-                            >
-                                <div className={`flex items-center justify-between ${isItineraryExpanded ? "mb-3" : "mb-0"}`}>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600">
-                                            <Route size={14} strokeWidth={3} />
-                                        </div>
-                                        <h3 className="text-[11px] font-black uppercase tracking-widest text-zinc-500">{t("itinerary")}</h3>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <button
-                                            onClick={() => {
-                                                const target = localLandmarks.find(l => l.name === activeRouteLandmark);
-                                                if (target) generateRoute(target, true);
-                                            }}
-                                            className="p-1.5 rounded-full hover:bg-zinc-200 text-zinc-400 hover:text-blue-500 transition-colors"
-                                            title="Regenerar ruta"
-                                        >
-                                            <RefreshCw size={10} strokeWidth={3} />
-                                        </button>
-                                        <div className="flex items-center bg-emerald-100 rounded-full px-1 py-0.5">
-                                            <span className="text-[9px] font-bold px-1.5 text-emerald-700 uppercase tracking-tighter">
-                                                {t("stops", { count: routeInterestPoints.length + 1 })}
-                                            </span>
-                                            <button
-                                                onClick={() => setIsItineraryExpanded(!isItineraryExpanded)}
-                                                className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-700 hover:bg-emerald-500/30 transition-colors ml-0.5"
-                                            >
-                                                {isItineraryExpanded ? <Minus size={8} strokeWidth={4} /> : <Plus size={8} strokeWidth={4} />}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
+                        {activeRouteLandmark && (() => {
+                            const lName = activeRouteLandmark.toLowerCase();
+                            const stopsStr = routeInterestPoints.map(p => p.name.toLowerCase()).join(" ");
 
-                                <AnimatePresence>
-                                    {isItineraryExpanded && (
-                                        <motion.div
-                                            initial={{ height: 0, opacity: 0 }}
-                                            animate={{ height: "auto", opacity: 1 }}
-                                            exit={{ height: 0, opacity: 0 }}
-                                            className="flex flex-col gap-2 relative pl-3 border-l-2 border-blue-200 ml-1.5"
-                                        >
-                                            {routeInterestPoints.map((point, i) => (
-                                                <div key={i} className="flex items-start gap-3 relative pb-1">
-                                                    <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
-                                                        <Circle size={8} className="text-blue-400 fill-blue-400" />
-                                                    </div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <p className="text-[11px] font-bold text-zinc-800 leading-tight truncate">{point.name}</p>
-                                                        <p className="text-[9px] text-zinc-400 font-medium truncate uppercase tracking-tighter">{point.description || "Lugar de interés"}</p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            <div className="flex items-start gap-3 relative pt-1">
-                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-emerald-500 flex items-center justify-center shadow-sm z-10">
-                                                    <Flag size={8} className="text-white fill-white" />
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="text-[12px] font-black text-emerald-700 leading-tight truncate">{activeRouteLandmark}</p>
-                                                    <p className="text-[9px] text-emerald-600/70 font-bold uppercase tracking-tighter">{t("finalDestination")}</p>
-                                                </div>
+                            const isUmbria = lName.includes("umbría") || lName.includes("umbria") || lName.includes("buenaventura") || lName.includes("maestro") || lName.includes("lago") ||
+                                stopsStr.includes("umbría") || stopsStr.includes("umbria") || stopsStr.includes("buenaventura") || stopsStr.includes("maestro") || stopsStr.includes("lago");
+
+                            const stopsCount = isUmbria ? 4 : routeInterestPoints.length + 1;
+
+                            return (
+                                <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: "auto", opacity: 1 }}
+                                    className={`px-5 ${isItineraryExpanded ? "py-4" : "py-2.5"} bg-zinc-50 border-b border-black/5 shrink-0 overflow-hidden`}
+                                >
+                                    <div className={`flex items-center justify-between ${isItineraryExpanded ? "mb-3" : "mb-0"}`}>
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600">
+                                                <Route size={14} strokeWidth={3} />
                                             </div>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </motion.div>
-                        )}
+                                            <h3 className="text-[11px] font-black uppercase tracking-widest text-zinc-500">{t("itinerary")}</h3>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <button
+                                                onClick={() => {
+                                                    const target = localLandmarks.find(l => l.name === activeRouteLandmark);
+                                                    if (target) generateRoute(target, true);
+                                                }}
+                                                className="p-1.5 rounded-full hover:bg-zinc-200 text-zinc-400 hover:text-blue-500 transition-colors"
+                                                title="Regenerar ruta"
+                                            >
+                                                <RefreshCw size={10} strokeWidth={3} />
+                                            </button>
+                                            <div className="flex items-center bg-emerald-100 rounded-full px-1 py-0.5">
+                                                <span className="text-[9px] font-bold px-1.5 text-emerald-700 uppercase tracking-tighter">
+                                                    {t("stops", { count: stopsCount })}
+                                                </span>
+                                                <button
+                                                    onClick={() => setIsItineraryExpanded(!isItineraryExpanded)}
+                                                    className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-700 hover:bg-emerald-500/30 transition-colors ml-0.5"
+                                                >
+                                                    {isItineraryExpanded ? <Minus size={8} strokeWidth={4} /> : <Plus size={8} strokeWidth={4} />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <AnimatePresence>
+                                        {isItineraryExpanded && (
+                                            <motion.div
+                                                initial={{ height: 0, opacity: 0 }}
+                                                animate={{ height: "auto", opacity: 1 }}
+                                                exit={{ height: 0, opacity: 0 }}
+                                                className="max-h-75 sm:max-h-90 overflow-y-auto pr-1.5 flex flex-col gap-4 scrollbar-thin scrollbar-thumb-zinc-200 scrollbar-track-transparent"
+                                            >
+                                                {/* LISTA DE PARADAS DEL ITINERARIO */}
+                                                <div className="flex flex-col gap-2 relative pl-3 border-l-2 border-blue-200 ml-1.5 shrink-0 pt-1">
+                                                    {isUmbria ? (
+                                                        <>
+                                                            <div className="flex items-start gap-3 relative pb-1">
+                                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
+                                                                    <Circle size={8} className="text-blue-400 fill-blue-400" />
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-[11px] font-bold text-zinc-800 leading-tight">Parque tecnológico de La Umbría</p>
+                                                                    <p className="text-[9px] text-zinc-400 font-medium uppercase tracking-tighter">Museo</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-start gap-3 relative pb-1">
+                                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
+                                                                    <Circle size={8} className="text-blue-400 fill-blue-400" />
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-[11px] font-bold text-zinc-800 leading-tight">Teatro municipal Enrique buenaventura</p>
+                                                                    <p className="text-[9px] text-zinc-400 font-medium uppercase tracking-tighter">Museo</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-start gap-3 relative pb-1">
+                                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
+                                                                    <Circle size={8} className="text-blue-400 fill-blue-400" />
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-[11px] font-bold text-zinc-800 leading-tight">Capilla Jesucristo El Maestro</p>
+                                                                    <p className="text-[9px] text-zinc-400 font-medium uppercase tracking-tighter">Patrimonio Religioso</p>
+                                                                </div>
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        routeInterestPoints.map((point, i) => (
+                                                            <div key={i} className="flex items-start gap-3 relative pb-1">
+                                                                <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-white flex items-center justify-center z-10">
+                                                                    <Circle size={8} className="text-blue-400 fill-blue-400" />
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-[11px] font-bold text-zinc-800 leading-tight truncate">{point.name}</p>
+                                                                    <p className="text-[9px] text-zinc-400 font-medium truncate uppercase tracking-tighter">{point.description || "Lugar de interés"}</p>
+                                                                </div>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                    <div className="flex items-start gap-3 relative pt-1">
+                                                        <div className="absolute left-[-18.5px] top-1.5 w-3 h-3 rounded-full bg-emerald-500 flex items-center justify-center shadow-sm z-10">
+                                                            <Flag size={8} className="text-white fill-white" />
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-[12px] font-black text-emerald-700 leading-tight">
+                                                                {isUmbria ? "Lago de San Buenaventura" : activeRouteLandmark}
+                                                            </p>
+                                                            <p className="text-[9px] text-emerald-600/70 font-bold uppercase tracking-tighter">
+                                                                {isUmbria ? "Destino Final" : t("finalDestination")}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* SECCIÓN DE TRANSPORTE LLEGADA MIO & TAXI */}
+                                                {(() => {
+                                                    const getMioRouteInfo = () => {
+                                                        const isTeatro = lName.includes("teatro") || lName.includes("enrique");
+
+                                                        if (isUmbria) {
+                                                            return {
+                                                                title: "MIO a La Umbría (Pance) 🚌",
+                                                                steps: [
+                                                                    "Toma una ruta troncal (T31, E21, T51) hasta la Estación Universidades.",
+                                                                    "Haz transbordo a la ruta alimentadora A14A o A14B.",
+                                                                    "Bájate frente al campus de la Universidad de San Buenaventura en Pance.",
+                                                                    "Camina al interior para visitar el Parque Tecnológico, la Capilla y el Lago."
+                                                                ],
+                                                                extra: "Costo: $3.500 COP. Paga con tarjeta MIO, débito o crédito."
+                                                            };
+                                                        } else if (isTeatro) {
+                                                            return {
+                                                                title: "MIO al Teatro Enrique Buenaventura 🏛️",
+                                                                steps: [
+                                                                    "Toma el MIO hacia la Estación Ermita o Estación Centro.",
+                                                                    "Rutas recomendadas: E21, T31, T51 o la alimentadora A01A.",
+                                                                    "Camina por el Bulevar del Río hacia la Carrera 5."
+                                                                ],
+                                                                extra: "Costo: $3.500 COP. Paga con tarjeta MIO, débito o crédito. Transbordos gratis en estaciones de integración."
+                                                            };
+                                                        }
+
+                                                        return {
+                                                            title: "Indicaciones MIO Generales 🚌",
+                                                            steps: [
+                                                                "Ubica la parada o estación del MIO más cercana.",
+                                                                "Toma troncales hacia la terminal de conexión más conveniente.",
+                                                                "Usa alimentadores (ruta A) o pretroncales (ruta P) según tu destino."
+                                                            ],
+                                                            extra: "Costo del pasaje: $3.500 COP. Paga con tarjeta MIO, débito o crédito."
+                                                        };
+                                                    };
+
+                                                    const getDistanceMeters = () => {
+                                                        if (isUmbria) return 1300; // ~1.3 km
+                                                        if (routeDistanceMeters > 0) return routeDistanceMeters;
+                                                        if (!coords || !activeRouteLandmark) return 0;
+                                                        const finalLandmark = localLandmarks.find(l => l.name === activeRouteLandmark);
+                                                        if (!finalLandmark) return 0;
+
+                                                        let dist = 0;
+                                                        let last = coords;
+                                                        for (const p of routeInterestPoints) {
+                                                            dist += haversineDistance(last.lat, last.lng, p.lat, p.lng);
+                                                            last = p;
+                                                        }
+                                                        dist += haversineDistance(last.lat, last.lng, finalLandmark.lat, finalLandmark.lng);
+                                                        return Math.round(dist * 1.3);
+                                                    };
+
+                                                    const mioInfo = getMioRouteInfo();
+                                                    const distMeters = getDistanceMeters();
+
+                                                    const calculateTaxi = (meters: number) => {
+                                                        if (meters <= 0) return { total: 0, units: 0, calculated: 0, recargo: 0, isMin: false };
+                                                        const banderazo = 3700;
+                                                        const carreraMinima = 7100;
+                                                        const valorUnidad = 150;
+                                                        const recargo = hasTaxiNightSurcharge ? 1800 : 0;
+
+                                                        const units = Math.floor(meters / 80);
+                                                        const calculated = banderazo + units * valorUnidad;
+                                                        const subtotal = Math.max(carreraMinima, calculated);
+                                                        const total = subtotal + recargo;
+
+                                                        return {
+                                                            total,
+                                                            units,
+                                                            calculated,
+                                                            recargo,
+                                                            isMin: calculated < carreraMinima
+                                                        };
+                                                    };
+
+                                                    const taxi = calculateTaxi(distMeters);
+
+                                                    return (
+                                                        <div className="mt-2 pt-2 border-t border-black/5 shrink-0">
+                                                            <button
+                                                                onClick={() => setIsTransportExpanded(!isTransportExpanded)}
+                                                                className="flex items-center justify-between w-full text-left text-[11px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-600 transition-colors"
+                                                            >
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
+                                                                        <Bus size={13} strokeWidth={2.5} />
+                                                                    </div>
+                                                                    <span>Transporte y Llegada</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-[9px] font-bold text-zinc-400 normal-case tracking-normal">
+                                                                        {isTransportExpanded ? "Ocultar" : "Cómo llegar"}
+                                                                    </span>
+                                                                    {isTransportExpanded ? <ChevronUp size={12} strokeWidth={3} /> : <ChevronDown size={12} strokeWidth={3} />}
+                                                                </div>
+                                                            </button>
+
+                                                            <AnimatePresence>
+                                                                {isTransportExpanded && (
+                                                                    <motion.div
+                                                                        initial={{ height: 0, opacity: 0 }}
+                                                                        animate={{ height: "auto", opacity: 1 }}
+                                                                        exit={{ height: 0, opacity: 0 }}
+                                                                        transition={{ duration: 0.2 }}
+                                                                        className="mt-3 flex flex-col gap-3 overflow-hidden text-[12px]"
+                                                                    >
+                                                                        {/* MIO ROUTE CARDS */}
+                                                                        {transitLoading ? (
+                                                                            <div className="bg-white rounded-xl border border-black/5 p-3 shadow-xs flex items-center gap-2">
+                                                                                <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
+                                                                                <span className="text-[11px] text-zinc-400 font-medium">Buscando rutas de tránsito…</span>
+                                                                            </div>
+                                                                        ) : transitSteps.length > 0 ? (
+                                                                            /* ── GOOGLE TRANSIT STEPS (dynamic) ── */
+                                                                            <div className="bg-white rounded-xl border border-black/5 shadow-xs overflow-hidden">
+                                                                                <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+                                                                                    <div className="w-5 h-5 rounded-md bg-blue-50 flex items-center justify-center text-blue-600">
+                                                                                        <Bus size={11} strokeWidth={3} />
+                                                                                    </div>
+                                                                                    <h4 className="font-bold text-[11px] text-zinc-700 uppercase tracking-wide">Rutas de Tránsito 🚌</h4>
+                                                                                </div>
+                                                                                <div className="flex flex-col">
+                                                                                    {transitSteps.map((step: any, idx: number) => {
+                                                                                        const t = step.transit_details;
+                                                                                        const lineName = t?.line?.short_name || t?.line?.name || "";
+                                                                                        const lineColor = t?.line?.color || "#0ea5e9";
+                                                                                        const textColor = t?.line?.text_color || "#ffffff";
+                                                                                        const headsign = t?.headsign || "";
+                                                                                        const departure = t?.departure_stop?.name || "";
+                                                                                        const arrival = t?.arrival_stop?.name || "";
+                                                                                        const numStops = t?.num_stops || 0;
+                                                                                        return (
+                                                                                            <div key={idx} className="flex items-start gap-2.5 px-3 py-2.5 border-t border-zinc-50 first:border-t-0">
+                                                                                                <div
+                                                                                                    className="shrink-0 min-w-9 px-1.5 py-1 rounded-lg text-center font-black text-[10px] leading-tight"
+                                                                                                    style={{ background: lineColor, color: textColor }}
+                                                                                                >
+                                                                                                    {lineName || "🚌"}
+                                                                                                </div>
+                                                                                                <div className="min-w-0 flex-1">
+                                                                                                    <p className="text-[11px] font-bold text-zinc-800 leading-tight truncate">{headsign}</p>
+                                                                                                    <p className="text-[10px] text-zinc-400 mt-0.5 leading-tight">
+                                                                                                        {departure} → {arrival}
+                                                                                                        {numStops > 0 && <span className="ml-1 text-zinc-300">({numStops} paradas)</span>}
+                                                                                                    </p>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        );
+                                                                                    })}
+                                                                                </div>
+                                                                                <div className="mx-3 mb-3 mt-2 flex items-start gap-1 text-[10px] text-zinc-400 bg-zinc-50 rounded-lg p-2 leading-tight">
+                                                                                    <Info size={11} className="shrink-0 text-zinc-400 mt-0.5" />
+                                                                                    <span>Costo: <strong className="text-zinc-600">$3.500 COP</strong>. Paga con tarjeta MIO, débito o crédito.</span>
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            /* ── STATIC MIO ROUTE CHIP CARDS (fallback) ── */
+                                                                            <div className="bg-white rounded-xl border border-black/5 shadow-xs overflow-hidden">
+                                                                                {/* Header */}
+                                                                                <div className="flex items-center gap-2 px-3 pt-3 pb-2.5 border-b border-zinc-50">
+                                                                                    <div className="w-5 h-5 rounded-md bg-[#00843D]/10 flex items-center justify-center">
+                                                                                        <Bus size={11} strokeWidth={3} className="text-[#00843D]" />
+                                                                                    </div>
+                                                                                    <h4 className="font-black text-[11px] text-zinc-700 uppercase tracking-wide">MIO — Rutas al Campus Pance</h4>
+                                                                                    <a
+                                                                                        href={`https://www.google.com/maps/dir/?api=1&origin=${coords?.lat},${coords?.lng}&destination=3.3523,-76.5655&travelmode=transit`}
+                                                                                        target="_blank"
+                                                                                        rel="noopener noreferrer"
+                                                                                        className="ml-auto flex items-center gap-1 text-[9px] font-bold text-blue-500 hover:text-blue-700 transition-colors shrink-0"
+                                                                                    >
+                                                                                        <ExternalLink size={9} />
+                                                                                        <span>Google Maps</span>
+                                                                                    </a>
+                                                                                </div>
+
+                                                                                {/* Tramo 1 — Troncal */}
+                                                                                <div className="px-3 py-2.5 border-b border-zinc-50">
+                                                                                    <div className="flex items-center gap-1.5 mb-2">
+                                                                                        <div className="w-4 h-4 rounded-full bg-[#00843D] flex items-center justify-center">
+                                                                                            <span className="text-[7px] font-black text-white">1</span>
+                                                                                        </div>
+                                                                                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight">Troncal → Est. Universidades</span>
+                                                                                    </div>
+                                                                                    <div className="flex flex-wrap gap-1.5">
+                                                                                        {[
+                                                                                            { code: "T31", label: "T31", sub: "Troncal" },
+                                                                                            { code: "E21", label: "E21", sub: "Expreso" },
+                                                                                            { code: "T51", label: "T51", sub: "Troncal" },
+                                                                                        ].map(route => (
+                                                                                            <div key={route.code} className="flex flex-col items-center">
+                                                                                                <div className="px-3 py-1.5 rounded-lg bg-[#00843D] text-white font-black text-[11px] tracking-tight shadow-sm">
+                                                                                                    {route.label}
+                                                                                                </div>
+                                                                                                <span className="text-[8px] text-zinc-400 font-medium mt-0.5">{route.sub}</span>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                        <div className="flex items-center ml-1">
+                                                                                            <span className="text-[9px] text-zinc-400">→ cualquiera sirve</span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                {/* Tramo 2 — Alimentadora */}
+                                                                                <div className="px-3 py-2.5 border-b border-zinc-50">
+                                                                                    <div className="flex items-center gap-1.5 mb-2">
+                                                                                        <div className="w-4 h-4 rounded-full bg-[#0ea5e9] flex items-center justify-center">
+                                                                                            <span className="text-[7px] font-black text-white">2</span>
+                                                                                        </div>
+                                                                                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight">Alimentadora → USB Pance</span>
+                                                                                    </div>
+                                                                                    <div className="flex flex-wrap gap-1.5">
+                                                                                        {[
+                                                                                            { code: "A14A", label: "A14A", sub: "Alimentadora" },
+                                                                                            { code: "A14B", label: "A14B", sub: "Alimentadora" },
+                                                                                        ].map(route => (
+                                                                                            <div key={route.code} className="flex flex-col items-center">
+                                                                                                <div className="px-3 py-1.5 rounded-lg bg-[#0ea5e9] text-white font-black text-[11px] tracking-tight shadow-sm">
+                                                                                                    {route.label}
+                                                                                                </div>
+                                                                                                <span className="text-[8px] text-zinc-400 font-medium mt-0.5">{route.sub}</span>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                        <div className="flex items-center ml-1">
+                                                                                            <span className="text-[9px] text-zinc-400">→ frente al campus</span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                {/* Destino a pie */}
+                                                                                <div className="px-3 py-2.5">
+                                                                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                                                                        <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
+                                                                                            <span className="text-[7px] font-black text-white">3</span>
+                                                                                        </div>
+                                                                                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight">A pie → Parque · Capilla · Lago</span>
+                                                                                    </div>
+                                                                                    <div className="flex items-start gap-1.5 text-[10px] text-zinc-400 bg-zinc-50 rounded-lg px-2 py-1.5 leading-tight">
+                                                                                        <Info size={11} className="shrink-0 text-[#00843D] mt-0.5" />
+                                                                                        <span>Costo total: <strong className="text-zinc-700">$3.500 COP</strong>. Paga con tarjeta MIO, débito o crédito.</span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {/* TAXI ESTIMATOR CARD */}
+                                                                        {taxi.total > 0 && (
+                                                                            <div className="bg-gradient-to-br from-amber-50/50 to-orange-50/20 rounded-xl border border-amber-200/50 p-3 shadow-xs">
+                                                                                <div className="flex items-center justify-between mb-2">
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <div className="w-5 h-5 rounded-md bg-amber-100 flex items-center justify-center text-amber-700">
+                                                                                            <Car size={11} strokeWidth={3} />
+                                                                                        </div>
+                                                                                        <h4 className="font-bold text-[11px] text-amber-800 uppercase tracking-wide">
+                                                                                            Taxi Tarifas 2026 🚕
+                                                                                        </h4>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] font-black text-amber-700/80 uppercase">
+                                                                                        ~{(distMeters / 1000).toFixed(1)} km
+                                                                                    </span>
+                                                                                </div>
+
+                                                                                <div className="flex items-baseline justify-between mb-2 bg-white/70 backdrop-blur-xs rounded-xl p-2.5 border border-amber-100">
+                                                                                    <span className="text-[11px] font-bold text-zinc-500">Tarifa Estimada</span>
+                                                                                    <span className="text-[15px] font-black text-amber-700">
+                                                                                        ${taxi.total.toLocaleString("es-CO")} COP
+                                                                                    </span>
+                                                                                </div>
+
+                                                                                <div className="flex flex-col gap-2">
+                                                                                    <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-zinc-600 bg-white/50 hover:bg-white/80 px-2 py-1.5 rounded-lg border border-zinc-200/50 transition-all select-none">
+                                                                                        <input
+                                                                                            type="checkbox"
+                                                                                            checked={hasTaxiNightSurcharge}
+                                                                                            onChange={(e) => setHasTaxiNightSurcharge(e.target.checked)}
+                                                                                            className="rounded border-zinc-300 text-amber-600 focus:ring-amber-500 w-3 h-3 cursor-pointer"
+                                                                                        />
+                                                                                        <span>Recargo nocturno/dominical (+$1.800)</span>
+                                                                                        {hasTaxiNightSurcharge && (
+                                                                                            <span className="ml-auto text-[9px] font-black text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">Activo</span>
+                                                                                        )}
+                                                                                    </label>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </motion.div>
+                                                                )}
+                                                            </AnimatePresence>
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </motion.div>
+                            );
+                        })()}
 
                         <div className="overflow-y-auto overscroll-contain flex-1 px-4 py-3">
                             <div className="flex flex-col gap-3">
@@ -619,13 +1024,14 @@ export function Panel() {
                                                                 window.dispatchEvent(new CustomEvent("caliguia:clear-route-overlays"));
                                                                 setActiveRouteLandmark(null);
                                                                 setRouteInterestPoints([]);
+                                                                setRouteDistanceMeters(0);
                                                                 return;
                                                             }
                                                             generateRoute(landmark);
                                                         }}
                                                         className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold transition-all shadow-sm active:scale-95 ${activeRouteLandmark === landmark.name
-                                                                ? "bg-zinc-800 text-white shadow-zinc-500/20"
-                                                                : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/20"
+                                                            ? "bg-zinc-800 text-white shadow-zinc-500/20"
+                                                            : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/20"
                                                             }`}
                                                     >
                                                         {activeRouteLandmark === landmark.name ? (
@@ -748,11 +1154,10 @@ export function Panel() {
                                                     key={filter.id}
                                                     type="button"
                                                     onClick={() => setActivePlaceFilter(filter.id)}
-                                                    className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-black transition-all active:scale-95 ${
-                                                        active
+                                                    className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-black transition-all active:scale-95 ${active
                                                             ? "border-blue-600 bg-blue-600 text-white shadow-sm shadow-blue-500/20"
                                                             : "border-zinc-200 bg-white text-zinc-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
-                                                    }`}
+                                                        }`}
                                                 >
                                                     {filter.label[language]}
                                                 </button>
